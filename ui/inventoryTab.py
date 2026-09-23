@@ -157,6 +157,9 @@ class InventoryTab(QWidget):
             []
         )
 
+        self.wider_pockets_checkbox.blockSignals(True)
+        self.deeper_pockets_checkbox.blockSignals(True)
+
         if "invrows 6" in uniques:
             self.wider_pockets_checkbox.setChecked(True)
             self.deeper_pockets_checkbox.setChecked(True)
@@ -168,6 +171,9 @@ class InventoryTab(QWidget):
         else:
             self.wider_pockets_checkbox.setChecked(False)
             self.deeper_pockets_checkbox.setChecked(False)
+
+        self.wider_pockets_checkbox.blockSignals(False)
+        self.deeper_pockets_checkbox.blockSignals(False)
 
         self.update_inventory_grid()
 
