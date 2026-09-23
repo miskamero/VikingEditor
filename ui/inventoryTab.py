@@ -1,4 +1,5 @@
 import json
+import re
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -7,7 +8,9 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QDialog,
-    QApplication
+    QApplication,
+    QHBoxLayout,
+    QCheckBox
 )
 
 from PySide6.QtCore import Qt
@@ -17,46 +20,156 @@ from ui.itemEditDialog import ItemEditDialog
 
 class InventoryTab(QWidget):
     GRID_WIDTH = 8
-    GRID_HEIGHT = 4
+    DEFAULT_GRID_HEIGHT = 4
 
     def __init__(self):
         super().__init__()
         self.player_data = None
         
         self.main_layout = QVBoxLayout(self)
+
+        self.upgrade_layout = QHBoxLayout()
+
+        self.wider_pockets_checkbox = QCheckBox(
+            "Wider Pockets"
+        )
+
+        self.deeper_pockets_checkbox = QCheckBox(
+            "Deeper Pockets"
+        )
+
+        self.upgrade_layout.addWidget(
+            self.wider_pockets_checkbox
+        )
+
+        self.upgrade_layout.addWidget(
+            self.deeper_pockets_checkbox
+        )
+
+        self.upgrade_layout.addStretch()
+
+        self.main_layout.addLayout(
+            self.upgrade_layout
+        )
+
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(6)
         self.main_layout.addLayout(self.grid_layout)
         
         self.slots = {}
+
+        self.wider_pockets_checkbox.stateChanged.connect(
+            self.handle_wider_pockets
+        )
+        self.deeper_pockets_checkbox.stateChanged.connect(
+            self.update_inventory_grid
+        )
+
         self.init_empty_grid()
 
-    def init_empty_grid(self):
-        for i in reversed(range(self.grid_layout.count())): 
-            self.grid_layout.itemAt(i).widget().setParent(None)
-        
+    def get_inventory_rows(self):
+        if self.deeper_pockets_checkbox.isChecked():
+            return 6
+        elif self.wider_pockets_checkbox.isChecked():
+            return 5
+        else:
+            return 4
+
+    def handle_wider_pockets(self, state):
+        if not state and self.deeper_pockets_checkbox.isChecked():
+            self.deeper_pockets_checkbox.blockSignals(True)
+            self.deeper_pockets_checkbox.setChecked(False)
+            self.deeper_pockets_checkbox.blockSignals(False)
+
+        self.update_inventory_grid()
+
+    def update_inventory_grid(self):
+        if self.deeper_pockets_checkbox.isChecked():
+            if not self.wider_pockets_checkbox.isChecked():
+                self.wider_pockets_checkbox.blockSignals(True)
+                self.wider_pockets_checkbox.setChecked(True)
+                self.wider_pockets_checkbox.blockSignals(False)
+
+            rows = 6
+
+        elif self.wider_pockets_checkbox.isChecked():
+            rows = 5
+
+        else:
+            rows = 4
+
+        self.init_empty_grid(rows)
+
+    def init_empty_grid(self, rows=4):
+        inventory_items = []
+
+        if self.player_data:
+            inventory_items = self.player_data.get(
+                "inventory",
+                []
+            ).copy()
+
+        for i in reversed(range(self.grid_layout.count())):
+            widget = self.grid_layout.itemAt(i).widget()
+            if widget is not None:
+                widget.setParent(None)
+
         self.slots.clear()
 
-        for y in range(self.GRID_HEIGHT):
+        for y in range(rows):
             for x in range(self.GRID_WIDTH):
                 slot = InventorySlot(x, y, self)
-                slot.setContextMenuPolicy(Qt.CustomContextMenu)
-                slot.customContextMenuRequested.connect(lambda pos, s=slot: self.show_slot_menu(pos, s))
-                slot.clicked.connect(lambda checked=False, s=slot: self.on_slot_clicked(s))
-                
-                self.grid_layout.addWidget(slot, y, x)
+
+                slot.setContextMenuPolicy(
+                    Qt.CustomContextMenu
+                )
+
+                slot.customContextMenuRequested.connect(
+                    lambda pos, s=slot:
+                    self.show_slot_menu(pos, s)
+                )
+
+                slot.clicked.connect(
+                    lambda checked=False, s=slot:
+                    self.on_slot_clicked(s)
+                )
+
+                self.grid_layout.addWidget(
+                    slot,
+                    y,
+                    x
+                )
+
                 self.slots[(x, y)] = slot
+
+        for item in inventory_items:
+            x = item.get("grid_x", 0)
+            y = item.get("grid_y", 0)
+
+            if (x, y) in self.slots:
+                self.slots[(x, y)].set_item(item)
 
     def load_data(self, player_data):
         self.player_data = player_data
-        self.init_empty_grid()
 
-        inventory_list = player_data.get("inventory", [])
-        for item in inventory_list:
-            x = item.get("grid_x", 0)
-            y = item.get("grid_y", 0)
-            if (x, y) in self.slots:
-                self.slots[(x, y)].set_item(item)
+        uniques = player_data.get(
+            "uniques",
+            []
+        )
+
+        if "invrows 6" in uniques:
+            self.wider_pockets_checkbox.setChecked(True)
+            self.deeper_pockets_checkbox.setChecked(True)
+
+        elif "invrows 5" in uniques:
+            self.wider_pockets_checkbox.setChecked(True)
+            self.deeper_pockets_checkbox.setChecked(False)
+
+        else:
+            self.wider_pockets_checkbox.setChecked(False)
+            self.deeper_pockets_checkbox.setChecked(False)
+
+        self.update_inventory_grid()
 
     def on_slot_clicked(self, slot: InventorySlot):
         """Standard left-click action on a slot."""
@@ -95,7 +208,11 @@ class InventoryTab(QWidget):
                 self.paste_slot_item(slot)
 
     def edit_slot_item(self, slot: InventorySlot):
-        dialog = ItemEditDialog(slot.item_data, self)
+        dialog = ItemEditDialog(
+            slot.item_data,
+            self,
+            self.get_inventory_rows()
+        )
         if dialog.exec() == QDialog.Accepted:
             updated = dialog.get_updated_data()
             slot.item_data.update(updated)
@@ -188,7 +305,11 @@ class InventoryTab(QWidget):
             "picked_up": True
         }
 
-        dialog = ItemEditDialog(new_item, self)
+        dialog = ItemEditDialog(
+            new_item,
+            self,
+            self.get_inventory_rows()
+        )
         if dialog.exec() == QDialog.Accepted:
             final_item = dialog.get_updated_data()
             new_item.update(final_item)
@@ -197,5 +318,44 @@ class InventoryTab(QWidget):
             slot.set_item(new_item)
 
     def save_changes(self):
-        # what?
-        pass
+        if not self.player_data:
+            return
+
+        uniques = self.player_data.get(
+            "uniques",
+            []
+        )
+
+        uniques = [
+            unique
+            for unique in uniques
+            if not (
+                isinstance(unique, str)
+                and (
+                    unique.startswith("invrows ")
+                    or re.fullmatch(r"invslot\d+", unique)
+                )
+            )
+        ]
+
+        if self.deeper_pockets_checkbox.isChecked():
+            rows = 6
+        elif self.wider_pockets_checkbox.isChecked():
+            rows = 5
+        else:
+            rows = 4
+
+        if rows > self.DEFAULT_GRID_HEIGHT:
+            uniques.append(
+                f"invrows {rows}"
+            )
+
+            for slot_number in range(
+                1,
+                rows - self.DEFAULT_GRID_HEIGHT + 1
+            ):
+                uniques.append(
+                    f"invslot{slot_number}"
+                )
+
+        self.player_data["uniques"] = uniques

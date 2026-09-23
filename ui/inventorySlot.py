@@ -376,7 +376,8 @@ class InventorySlot(QPushButton):
         # Quality badge.
         if quality > 1:
             self.quality_label.setText(
-                "★" * quality
+                # "★" * quality
+                f"{quality}★"
             )
 
             self.quality_label.setStyleSheet("""

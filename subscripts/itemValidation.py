@@ -1,11 +1,11 @@
 GRID_WIDTH = 8
-GRID_HEIGHT = 4
+DEFAULT_GRID_HEIGHT = 4
 
 MIN_STACK = 1
 MAX_STACK = 9999
 
 MIN_QUALITY = 1
-MAX_QUALITY = 5
+MAX_QUALITY = 99
 
 MIN_VARIANT = 0
 MAX_VARIANT = 99
@@ -14,7 +14,7 @@ MIN_DURABILITY = 0.0
 MAX_DURABILITY = 99999.0
 
 
-def validate_item(item):
+def validate_item(item, player_data=None):
     errors = []
 
     if not isinstance(item, dict):
@@ -61,11 +61,21 @@ def validate_item(item):
             f"Grid X must be between 0 and {GRID_WIDTH - 1}."
         )
 
+    inventory_rows = DEFAULT_GRID_HEIGHT
+
+    if player_data:
+        uniques = player_data.get("uniques", [])
+
+        if "invrows 6" in uniques:
+            inventory_rows = 6
+        elif "invrows 5" in uniques:
+            inventory_rows = 5
+
     if not isinstance(grid_y, int) or isinstance(grid_y, bool):
         errors.append("Grid Y must be an integer.")
-    elif not 0 <= grid_y < GRID_HEIGHT:
+    elif not 0 <= grid_y < inventory_rows:
         errors.append(
-            f"Grid Y must be between 0 and {GRID_HEIGHT - 1}."
+            f"Grid Y must be between 0 and {inventory_rows - 1}."
         )
 
     # Quality
@@ -116,7 +126,10 @@ def validate_item(item):
     return errors
 
 
-def is_valid_item(item):
+def is_valid_item(item, player_data=None):
     """Return True when the item passes validation."""
 
-    return not validate_item(item)
+    return not validate_item(
+        item,
+        player_data
+    )

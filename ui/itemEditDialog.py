@@ -15,11 +15,12 @@ from subscripts.itemValidation import validate_item
 class ItemEditDialog(QDialog):
     """A dialog to edit details of a specific item slot."""
 
-    def __init__(self, item_data, parent=None):
+    def __init__(self, item_data, parent=None, inventory_rows=4):
         super().__init__(parent)
 
         self.setWindowTitle("Edit Inventory Item")
         self.item_data = item_data
+        self.inventory_rows = inventory_rows
 
         layout = QFormLayout(self)
 
@@ -41,7 +42,7 @@ class ItemEditDialog(QDialog):
         )
 
         self.quality_input = QSpinBox()
-        self.quality_input.setRange(1, 5)
+        self.quality_input.setRange(1, 99)
         self.quality_input.setValue(
             item_data.get("quality", 1)
         )
@@ -96,7 +97,14 @@ class ItemEditDialog(QDialog):
         item = self.item_data.copy()
         item.update(self.get_updated_data())
 
-        errors = validate_item(item)
+        errors = validate_item(
+            item,
+            {
+                "uniques": [
+                    f"invrows {self.inventory_rows}"
+                ]
+            }
+        )
 
         if errors:
             QMessageBox.warning(
