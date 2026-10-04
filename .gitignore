@@ -4,6 +4,7 @@
 *.fch
 */__pycache__
 *.gif
+!docs/media/showcase.gif
 /build
 /dist
 *.spec

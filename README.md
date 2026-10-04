@@ -4,6 +4,15 @@ An interactive desktop application written in Python and PySide6 for safely deco
 
 VikingEditor provides a modern graphical interface for editing character data without requiring a hex editor or manually handling Valheim's save-file integrity hash.
 
+![Animated tour of VikingEditor's Inventory, Skills, Stats, Progress, and Statistics tabs](docs/media/showcase.gif)
+
+The tour uses an illustrative demo character. [View the inventory screenshot](docs/media/inventory.png) or browse the [full screenshot gallery](docs/media/README.md).
+
+**Find it. Preview it. Make it yours.** Search your item library, preview styles, and edit your Viking's inventory in one place.
+
+
+</details>
+
 **VikingEditor 2.0** introduces a significantly expanded character editor, automatic backups, character creation, improved save management, and dedicated views for character progress, statistics, and world data.
 
 ---
@@ -164,7 +173,7 @@ VikingEditor can be used in two ways:
 
 Both options require:
 
-* **Windows**
+* **Windows** or **Linux**
 * A local installation of **Valheim**
 
 The source-code option additionally requires:
