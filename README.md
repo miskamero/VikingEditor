@@ -33,6 +33,8 @@ VikingEditor provides a modern graphical interface for editing character data wi
   * Modify stack sizes, durability, quality, variants, equipped state, and other supported item data.
   * Search and select items using the integrated item database.
   * Supports custom item data and Valheim item metadata.
+  * Toggle **Spawned in with cheats** in the item editor. Flagged slots show a red **\u00d7** badge and a tooltip.
+  * Use **Clear All Cheated Flags** to clear the flag from every inventory item after confirmation. Save the character to apply these changes to the `.fch` file.
 
 * **Skills**
 

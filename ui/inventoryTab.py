@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QApplication,
     QHBoxLayout,
-    QCheckBox
+    QCheckBox,
+    QPushButton
 )
 
 from PySide6.QtCore import Qt
@@ -47,6 +48,14 @@ class InventoryTab(QWidget):
         )
 
         self.upgrade_layout.addStretch()
+
+        self.clear_cheated_button = QPushButton("Clear All Cheated Flags")
+        self.clear_cheated_button.setToolTip(
+            "Remove the 'spawned in with cheats' flag from every inventory item."
+        )
+        self.clear_cheated_button.setEnabled(False)
+        self.clear_cheated_button.clicked.connect(self.clear_all_cheated_flags)
+        self.upgrade_layout.addWidget(self.clear_cheated_button)
 
         self.main_layout.addLayout(
             self.upgrade_layout
@@ -151,6 +160,7 @@ class InventoryTab(QWidget):
 
     def load_data(self, player_data):
         self.player_data = player_data
+        self.clear_cheated_button.setEnabled(True)
 
         uniques = player_data.get(
             "uniques",
@@ -176,6 +186,36 @@ class InventoryTab(QWidget):
         self.deeper_pockets_checkbox.blockSignals(False)
 
         self.update_inventory_grid()
+
+    def clear_all_cheated_flags(self):
+        if not self.player_data:
+            return
+
+        flagged_items = [
+            item for item in self.player_data.get("inventory", [])
+            if item.get("cheated", False)
+        ]
+        if not flagged_items:
+            QMessageBox.information(
+                self, "Clear Cheated Flags",
+                "No items have the cheated flag set."
+            )
+            return
+
+        confirm = QMessageBox.question(
+            self, "Confirm Clear Cheated Flags",
+            f"Clear the cheated flag from {len(flagged_items)} item(s)?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        for item in flagged_items:
+            item["cheated"] = False
+        for slot in self.slots.values():
+            if slot.item_data:
+                slot.update_visuals()
 
     def on_slot_clicked(self, slot: InventorySlot):
         """Standard left-click action on a slot."""
@@ -308,7 +348,8 @@ class InventoryTab(QWidget):
             "crafter_name": "",
             "custom_data": {},
             "world_level": 0,
-            "picked_up": True
+            "picked_up": True,
+            "cheated": False
         }
 
         dialog = ItemEditDialog(

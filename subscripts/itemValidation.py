@@ -101,7 +101,7 @@ def validate_item(item, player_data=None):
         )
 
     # Boolean values
-    for field in ("equipped", "picked_up"):
+    for field in ("equipped", "picked_up", "cheated"):
         if field in item and not isinstance(item[field], bool):
             errors.append(f"{field} must be a boolean.")
 

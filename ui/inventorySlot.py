@@ -239,6 +239,22 @@ class InventorySlot(QPushButton):
 
         layout.addLayout(bottom_layout)
 
+        # Overlay the corner so the marker does not shrink the item contents.
+        self.cheated_label = QLabel("\u00d7", self)
+        self.cheated_label.setGeometry(98, 3, 19, 19)
+        self.cheated_label.setAlignment(Qt.AlignCenter)
+        self.cheated_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.cheated_label.setStyleSheet("""
+            QLabel {
+                color: #ff6666;
+                background-color: #321515;
+                border: 1px solid #ff6666;
+                border-radius: 4px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+        """)
+
         self.update_visuals()
 
     def set_item(self, item_data):
@@ -250,6 +266,10 @@ class InventorySlot(QPushButton):
         self.update_visuals()
 
     def update_visuals(self):
+        cheated = bool(self.item_data and self.item_data.get("cheated", False))
+        self.cheated_label.setVisible(cheated)
+        self.cheated_label.raise_()
+
         if not self.item_data:
             self.name_label.clear()
             self.stack_label.clear()
@@ -423,7 +443,8 @@ class InventorySlot(QPushButton):
             f"{display_name}\n"
             f"Stack: {stack}\n"
             f"Quality: {quality}\n"
-            f"Equipped: {'Yes' if equipped else 'No'}"
+            f"Equipped: {'Yes' if equipped else 'No'}\n"
+            f"Spawned in with cheats: {'Yes' if cheated else 'No'}"
         )
 
         # Slot background.

@@ -58,6 +58,12 @@ class ItemEditDialog(QDialog):
             item_data.get("equipped", False)
         )
 
+        self.cheated_input = QCheckBox()
+        self.cheated_input.setChecked(item_data.get("cheated", False))
+        self.cheated_input.setToolTip(
+            "Uncheck to remove this item's 'spawned in with cheats' label."
+        )
+
         layout.addRow(
             "Item:",
             self.prefab_input
@@ -82,6 +88,7 @@ class ItemEditDialog(QDialog):
             "Equipped:",
             self.equipped_input
         )
+        layout.addRow("Spawned in with cheats:", self.cheated_input)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -127,5 +134,6 @@ class ItemEditDialog(QDialog):
             "durability": self.durability_input.value(),
             "quality": self.quality_input.value(),
             "variant": self.variant_input.value(),
-            "equipped": self.equipped_input.isChecked()
+            "equipped": self.equipped_input.isChecked(),
+            "cheated": self.cheated_input.isChecked()
         }
