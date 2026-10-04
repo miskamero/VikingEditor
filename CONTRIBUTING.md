@@ -54,6 +54,27 @@ Pull requests should generally:
 
 Before submitting a pull request, make sure the project still starts and that your changes work as expected.
 
+### Automated tests
+
+The suite uses Python's built-in `unittest` and the project's existing dependencies.
+From the repository root, after installing `requirements.txt`, run:
+
+```sh
+python -m unittest discover -s tests -t . -v
+```
+
+Or run a single module or test when working on a specific area:
+
+```sh
+python -m unittest tests.test_validation -v
+python -m unittest tests.test_editor.InventoryTests.test_cancel_clear_preserves_inventory -v
+```
+
+The tests cover item validation, binary encoding, player-data and `.fch` round trips, save checksums, and editor behavior across all eight tabs. Qt widgets run offscreen; message boxes are mocked, save files use temporary directories, and the parser and item selector use a small fixture database. No Valheim installation, personal saves, or cached item database is needed. Temporary files are removed automatically.
+
+Add regression tests under `tests/test_*.py`. Use `subTest` for boundary cases, `TemporaryDirectory` for file operations, and the shared Qt test setup for widgets. These tests check application behavior, not screenshot appearance, the packaged
+executable, or compatibility with a running game. Continue to review UI changes visually and verify save compatibility separately when changing the file format.
+
 ### Commit messages
 
 Please use clear and descriptive commit messages.

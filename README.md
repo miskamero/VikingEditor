@@ -25,6 +25,8 @@ VikingEditor provides a modern graphical interface for editing character data wi
 
 ## Features
 
+For automated test commands and coverage, see [Automated tests](CONTRIBUTING.md#automated-tests).
+
 ### Character Editing
 
 * **Inventory**
