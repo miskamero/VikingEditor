@@ -56,8 +56,9 @@ Before submitting a pull request, make sure the project still starts and that yo
 
 ### Automated tests
 
-The suite uses Python's built-in `unittest` and the project's existing dependencies.
-From the repository root, after installing `requirements.txt`, run:
+The [Unit tests workflow](.github/workflows/unittests.yml) runs the suite on every push and pull request using Windows and Python 3.11. It can also be started manually from GitHub's Actions tab. Dependency downloads are cached using `requirements.txt`. A failing test fails the workflow; inspect the **Run unittest suite** step for details.
+
+The suite uses Python's built-in `unittest` and the project's existing dependencies. From the repository root, after installing `requirements.txt`, run:
 
 ```sh
 python -m unittest discover -s tests -t . -v
