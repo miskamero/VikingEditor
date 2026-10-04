@@ -76,6 +76,14 @@ class ItemIconTests(unittest.TestCase):
         self.manifest(["../../outside.png"])
         self.assertIsNone(database.get_item_icon_path("Wood"))
 
+    def test_invalid_entry_does_not_disable_unrelated_icons(self):
+        icons = database.extract_item_icons(self.component(self.sprite("red")), {})
+        self.path.write_text(json.dumps({"items": {
+            "1": {"prefab": "Wood", "icons": icons}, "2": None,
+            "3": {"prefab": "Broken", "icons": None}}}), encoding="utf-8")
+        self.assertIsNotNone(database.get_item_icon_path("Wood"))
+        self.assertIsNone(database.get_item_icon_path("Broken"))
+
     def test_cancellation_preserves_existing_database(self):
         self.manifest([])
         before = self.path.read_bytes()
@@ -84,6 +92,42 @@ class ItemIconTests(unittest.TestCase):
              patch.object(database.UnityPy, "Environment"), patch("builtins.print"):
             self.assertIsNone(database.update_item_database("unused", cancel_callback=lambda: True))
         self.assertEqual(self.path.read_bytes(), before)
+
+    def run_update(self, component):
+        component.type = database.ClassIDType.MonoBehaviour
+        component.assets_file.name = "fixture"
+        component.path_id = 1
+        obj = Mock(type=database.ClassIDType.GameObject)
+        obj.peek_name.return_value = "Wood"
+        obj.read.return_value = SimpleNamespace(m_Component=[
+            SimpleNamespace(component=Mock(deref=Mock(return_value=component)))])
+        with patch.object(database, "find_valheim_bundles", return_value=[]), \
+             patch.object(database.UnityPy, "Environment", return_value=SimpleNamespace(objects=[obj])), \
+             patch.object(database, "get_script_class_name", return_value="ItemDrop"), \
+             patch.object(database, "get_item_shared_name", return_value="$item_wood"), \
+             patch("builtins.print"):
+            return database.update_item_database("unused")
+
+    def test_update_repairs_deleted_icon_without_losing_other_variants(self):
+        component = self.component(self.sprite("red"), self.sprite("blue"))
+        self.run_update(component)
+        deleted = database.get_item_icon_path("Wood", 0)
+        unaffected = database.get_item_icon_path("Wood", 1)
+        deleted.unlink()
+        self.assertEqual(database.get_item_icon_path("Wood", 1), unaffected)
+        self.run_update(component)
+        self.assertTrue(deleted.is_file())
+        self.assertEqual(database.get_item_icon_path("Wood", 0), deleted)
+        self.assertEqual(database.get_item_icon_path("Wood", 1), unaffected)
+
+    def test_total_extraction_failure_preserves_manifest_and_reports_cause(self):
+        self.run_update(self.component(self.sprite("red")))
+        before = self.path.read_bytes()
+        broken = Mock(deref=Mock(side_effect=ValueError("texture unavailable")))
+        with self.assertRaisesRegex(RuntimeError, "texture unavailable"):
+            self.run_update(self.component(broken))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertIsNotNone(database.get_item_icon_path("Wood"))
 
 
 class InventoryIconTests(QtTestCase):

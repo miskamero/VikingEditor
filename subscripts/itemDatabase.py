@@ -141,10 +141,15 @@ def load_item_icons():
     """Read optional icon metadata; older item databases remain supported."""
     try:
         data = json.loads(ITEM_DATABASE_PATH.read_text(encoding="utf-8"))
-        return {entry["prefab"]: entry.get("icons", [])
-                for entry in data.get("items", {}).values()}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
+    if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+        return {}
+    # A damaged entry must not disable icons for every other item.
+    return {entry["prefab"]: entry["icons"]
+            for entry in data["items"].values()
+            if isinstance(entry, dict) and isinstance(entry.get("prefab"), str)
+            and isinstance(entry.get("icons"), list)}
 
 
 def get_item_icon_path(prefab, variant=0):
@@ -163,11 +168,13 @@ def get_item_icon_path(prefab, variant=0):
     return None
 
 
-def extract_item_icons(component, sprite_cache):
+def extract_item_icons(component, sprite_cache, errors=None):
     """Export shared icon variants, retaining empty entries for missing sprites."""
     try:
         references = component.read().m_itemData.m_shared.m_icons
-    except Exception:
+    except Exception as exc:
+        if errors is not None:
+            errors.append(f"Cannot read icon references: {type(exc).__name__}: {exc}")
         return []
     icons = []
     for reference in references or []:
@@ -186,6 +193,8 @@ def extract_item_icons(component, sprite_cache):
             image.save(buffer, format="PNG")
             payload = buffer.getvalue()
         except Exception as exc:
+            if errors is not None:
+                errors.append(f"{type(exc).__name__}: {exc}")
             print(f"Warning: could not decode item icon: {exc}")
             icons.append(None)
             continue
@@ -332,6 +341,7 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
 
     hash_collisions = []
     sprite_cache = {}
+    icon_errors = []
 
     for index, (prefab_name, shared_name) in enumerate(sorted(items.items()), 1):
         if cancel_callback and cancel_callback():
@@ -358,14 +368,22 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         hash_to_item[prefab_hash] = {
             "prefab": prefab_name,
             "shared_name": shared_name,
-            "icons": extract_item_icons(item_components[prefab_name], sprite_cache),
+            "icons": extract_item_icons(item_components[prefab_name], sprite_cache, icon_errors),
         }
+
+    if hash_to_item and not sprite_cache:
+        detail = icon_errors[0] if icon_errors else "No readable sprite references were found."
+        raise RuntimeError(
+            "No item icons could be extracted. The existing item database has been preserved.\n\n"
+            + detail
+        )
 
     output = {
         "valheim_version": "1.0",
         "source": str(get_bundles_dir(valheim_dir)),
         "item_count": len(hash_to_item),
         "icon_count": len(sprite_cache),
+        "icon_error_count": len(icon_errors),
         "game_objects_checked": game_objects_checked,
         "itemdrops_checked": itemdrops_checked,
         "hash_collision_count": len(hash_collisions),

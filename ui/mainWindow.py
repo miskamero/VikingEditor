@@ -51,6 +51,7 @@ from subscripts.playerDataUtil import (
 
 from subscripts.itemDatabase import (
     ITEM_DATABASE_PATH,
+    load_item_icons,
     update_item_database as scan_item_database
 )
 
@@ -411,6 +412,9 @@ class MainWindow(QMainWindow):
                 return
 
             reload_item_database()
+            from PySide6.QtGui import QPixmapCache
+            load_item_icons.cache_clear()
+            QPixmapCache.clear()
             for slot in self.inventory_tab.slots.values():
                 slot.update_visuals()
 
@@ -419,7 +423,9 @@ class MainWindow(QMainWindow):
                 "Item Database Updated",
                 "Valheim item database updated successfully.\n\n"
                 f"Valheim installation:\n{valheim_dir}\n\n"
-                f"Items found: {len(item_database)}"
+                f"Items found: {len(item_database)}\n"
+                f"Items with icons: {sum(any(icons) for icons in load_item_icons().values())}\n"
+                f"Icon cache: {ITEM_DATABASE_PATH.parent / 'item_icons'}"
             )
 
             self.update_items_action.setEnabled(True)
