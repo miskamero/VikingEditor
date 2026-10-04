@@ -164,7 +164,7 @@ VikingEditor can be used in two ways:
 
 Both options require:
 
-* **Windows**
+* **Windows** or **Linux**
 * A local installation of **Valheim**
 
 The source-code option additionally requires:
