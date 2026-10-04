@@ -1,4 +1,5 @@
 from datetime import datetime
+from ui.tabStyle import detail_layout, polish_forms
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -22,7 +23,9 @@ class CharacterTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        main_layout = QVBoxLayout(self)
+        main_layout = detail_layout(
+            self, "Character", "Edit your character's name and review identity and save details.", scroll=True
+        )
         main_layout.setSpacing(12)
 
         # ==========================================================
@@ -126,6 +129,8 @@ class CharacterTab(QWidget):
         main_layout.addWidget(actions_group)
 
         main_layout.addStretch()
+        polish_forms(self)
+        self.cheats_label.setToolTip("Change this character-wide flag in the Stats tab.")
 
     def create_readonly_field(self):
         field = QLineEdit()

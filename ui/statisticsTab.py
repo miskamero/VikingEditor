@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt
+from ui.tabStyle import detail_layout, polish_table
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -20,7 +21,10 @@ class StatisticsTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        layout = QVBoxLayout(self)
+        layout = detail_layout(
+            self, "Statistics", "Explore lifetime activity, combined across all saved profiles."
+        )
+        self.table_controls = {}
 
         self.tabs = QTabWidget()
 
@@ -50,6 +54,7 @@ class StatisticsTab(QWidget):
         search.setMinimumHeight(32)
         
         total_label = QLabel("Total: 0")
+        total_label.setObjectName("badge")
         total_label.setMinimumWidth(100)
         total_label.setAlignment(
             Qt.AlignmentFlag.AlignRight |
@@ -70,6 +75,7 @@ class StatisticsTab(QWidget):
         )
 
         table.verticalHeader().setDefaultSectionSize(30)
+        polish_table(table)
         table.horizontalHeader().setDefaultAlignment(
             Qt.AlignmentFlag.AlignLeft
         )
@@ -93,6 +99,10 @@ class StatisticsTab(QWidget):
         search.textChanged.connect(
             lambda text: self.filter_table(table, text)
         )
+        status = QLabel("No activity recorded.")
+        status.setObjectName("pageDescription")
+        layout.addWidget(status)
+        self.table_controls[table] = (search, total_label, status)
 
         return container, table, search, total_label
 
@@ -232,6 +242,8 @@ class StatisticsTab(QWidget):
                 1,
                 QTableWidgetItem(self.format_count(count))
             )
+            table.item(row, 1).setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.filter_table(table, self.table_controls[table][0].text())
 
     def filter_table(self, table, text):
         text = text.lower().strip()
@@ -245,6 +257,12 @@ class StatisticsTab(QWidget):
             matches = text in item.text().lower()
 
             table.setRowHidden(row, not matches)
+        visible = sum(not table.isRowHidden(row) for row in range(table.rowCount()))
+        status = self.table_controls[table][2]
+        status.setText(
+            f"{visible} of {table.rowCount()} entries"
+            if visible else ("No matching entries." if table.rowCount() else "No activity recorded.")
+        )
 
     def format_name(self, name):
         if name.startswith("$"):
@@ -259,6 +277,10 @@ class StatisticsTab(QWidget):
         return str(count)
 
     def clear_tables(self):
+        for table, (search, total, status) in self.table_controls.items():
+            search.clear()
+            total.setText("Total: 0")
+            status.setText("No activity recorded.")
         self.enemies_table.setRowCount(0)
         self.pickups_table.setRowCount(0)
         self.crafted_table.setRowCount(0)

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from data.powers import GUARDIAN_POWERS
+from ui.tabStyle import detail_layout, polish_forms, polish_table
 
 class StatsTab(QWidget):
     def __init__(self):
@@ -21,7 +22,9 @@ class StatsTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        main_layout = QVBoxLayout(self)
+        main_layout = detail_layout(
+            self, "Stats", "Manage vitals, active food buffs, and your Forsaken power.", scroll=True
+        )
 
         top_layout = QHBoxLayout()
 
@@ -76,6 +79,8 @@ class StatsTab(QWidget):
         self.food_table.setColumnCount(2)
         self.food_table.setHorizontalHeaderLabels(["Food Prefab", "Time Left (sec)"])
         self.food_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        polish_table(self.food_table)
+        self.food_table.setMinimumHeight(185)
         food_layout.addWidget(self.food_table)
         top_layout.addWidget(food_group)
 
@@ -95,20 +100,30 @@ class StatsTab(QWidget):
 
         gp_layout.addRow("Active Power:", self.gp_combo)
         gp_layout.addRow("Cooldown Remaining:", self.gp_cooldown_spin)
-        main_layout.addWidget(gp_group)
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addWidget(gp_group, 2)
 
         # 4. Meta Settings
         meta_group = QGroupBox("Character Flags")
         meta_layout = QFormLayout(meta_group)
 
-        self.used_cheats_check = QCheckBox("Used Cheats Flag")
+        self.used_cheats_check = QCheckBox("This character has used cheats")
+        self.used_cheats_check.setToolTip("Character-wide flag; individual item flags are edited in Inventory.")
         meta_layout.addRow(self.used_cheats_check)
-        main_layout.addWidget(meta_group)
+        bottom_layout.addWidget(meta_group, 1)
+        main_layout.addLayout(bottom_layout)
 
         main_layout.addStretch()
 
-        self.btn_add_food.clicked.connect(self.add_food_row)
+        polish_forms(self)
+        self.btn_add_food.clicked.connect(lambda: self.add_food_row())
         self.btn_remove_food.clicked.connect(self.remove_selected_food)
+        self.food_table.itemSelectionChanged.connect(self.update_food_buttons)
+        self.update_food_buttons()
+
+    def update_food_buttons(self):
+        self.btn_add_food.setEnabled(self.food_table.rowCount() < 3)
+        self.btn_remove_food.setEnabled(bool(self.food_table.selectedItems()))
 
     def load_data(self, player_data, root_save):
         """Loads data from both the nested character payload and the outer container."""
@@ -131,6 +146,7 @@ class StatsTab(QWidget):
         foods = self.player_data.get("foods", [])
         for food in foods:
             self.add_food_row(food.get("name", ""), food.get("time", 1200.0))
+        self.update_food_buttons()
 
         # Guardian Power loading
         gp_internal = self.player_data.get("guardian_power", "")
@@ -161,11 +177,13 @@ class StatsTab(QWidget):
         time_spin.setRange(0.0, 99999.0)
         time_spin.setValue(time)
         self.food_table.setCellWidget(row, 1, time_spin)
+        self.update_food_buttons()
 
     def remove_selected_food(self):
         current_row = self.food_table.currentRow()
         if current_row >= 0:
             self.food_table.removeRow(current_row)
+        self.update_food_buttons()
 
     def save_changes(self):
         """Applies UI edits back to the reference dictionaries."""

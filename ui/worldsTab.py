@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt
+from ui.tabStyle import detail_layout, polish_forms
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -10,6 +11,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFormLayout,
     QApplication,
+    QSplitter,
+    QLineEdit,
+    QGridLayout,
 )
 
 
@@ -21,12 +25,21 @@ class WorldsTab(QWidget):
         self.worlds = []
         self.known_worlds = {}
 
-        main_layout = QHBoxLayout(self)
-        main_layout.setSpacing(12)
+        main_layout = detail_layout(
+            self, "Worlds", "Browse visited worlds, time played, and saved character locations.", scroll=True
+        )
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        main_layout.addWidget(splitter, 1)
 
         # world lsit nöf
         worlds_group = QGroupBox("Worlds")
         worlds_layout = QVBoxLayout(worlds_group)
+        self.world_search = QLineEdit()
+        self.world_search.setPlaceholderText("Search worlds…")
+        self.world_search.setClearButtonEnabled(True)
+        self.world_search.textChanged.connect(self.filter_worlds)
+        worlds_layout.addWidget(self.world_search)
 
         self.world_list = QListWidget()
         self.world_list.currentRowChanged.connect(
@@ -35,10 +48,10 @@ class WorldsTab(QWidget):
 
         worlds_layout.addWidget(self.world_list)
 
-        main_layout.addWidget(
-            worlds_group,
-            1
-        )
+        self.world_count_label = QLabel("No worlds recorded.")
+        self.world_count_label.setObjectName("pageDescription")
+        worlds_layout.addWidget(self.world_count_label)
+        splitter.addWidget(worlds_group)
 
         # wrld info
         info_group = QGroupBox("World Information")
@@ -46,6 +59,7 @@ class WorldsTab(QWidget):
 
 
         self.world_name_label = QLabel("-")
+        self.world_name_label.setWordWrap(True)
         self.world_name_label.setStyleSheet(
             "font-size: 16px; font-weight: bold;"
         )
@@ -56,6 +70,7 @@ class WorldsTab(QWidget):
 
         # Time played
         self.time_played_label = QLabel("-")
+        self.time_played_label.setObjectName("badge")
 
         info_layout.addWidget(
             self.time_played_label
@@ -114,6 +129,7 @@ class WorldsTab(QWidget):
             self.death_label,
             self.home_label,
         ):
+            label.setWordWrap(True)
             label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
@@ -143,7 +159,7 @@ class WorldsTab(QWidget):
         )
 
         # copy buttons
-        actions_layout = QHBoxLayout()
+        actions_layout = QGridLayout()
 
         self.copy_spawn_button = QPushButton(
             "Copy Spawn"
@@ -183,18 +199,17 @@ class WorldsTab(QWidget):
         )
 
         actions_layout.addWidget(
-            self.copy_spawn_button
+            self.copy_spawn_button, 0, 0
         )
         actions_layout.addWidget(
-            self.copy_logout_button
+            self.copy_logout_button, 0, 1
         )
         actions_layout.addWidget(
-            self.copy_death_button
+            self.copy_death_button, 1, 0
         )
         actions_layout.addWidget(
-            self.copy_home_button
+            self.copy_home_button, 1, 1
         )
-        actions_layout.addStretch()
 
         info_layout.addLayout(
             actions_layout
@@ -202,12 +217,26 @@ class WorldsTab(QWidget):
 
         info_layout.addStretch()
 
-        main_layout.addWidget(
-            info_group,
-            2
-        )
+        splitter.addWidget(info_group)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([300, 650])
+        polish_forms(self)
 
         self.clear_display()
+
+    def filter_worlds(self):
+        query = self.world_search.text().strip().casefold()
+        visible = 0
+        for row in range(self.world_list.count()):
+            item = self.world_list.item(row)
+            matches = query in item.text().casefold()
+            item.setHidden(not matches)
+            visible += matches
+        self.world_count_label.setText(
+            f"{visible} of {self.world_list.count()} worlds"
+            if visible else ("No matching worlds." if self.world_list.count() else "No worlds recorded.")
+        )
 
     def load_data(self, root_save):
         self.root_save = root_save
@@ -215,6 +244,8 @@ class WorldsTab(QWidget):
         self.known_worlds = {}
 
         self.world_list.clear()
+        self.world_search.clear()
+        self.filter_worlds()
         self.clear_display()
 
         if not self.root_save:
@@ -277,6 +308,7 @@ class WorldsTab(QWidget):
 
         if self.world_list.count() > 0:
             self.world_list.setCurrentRow(0)
+        self.filter_worlds()
 
     # World Selection
     def on_world_selected(self, row):
@@ -482,22 +514,22 @@ class WorldsTab(QWidget):
     def update_button_states(self):
         self.copy_spawn_button.setEnabled(
             self.spawn_label.text()
-            != "Not set"
+            not in ("Not set", "-")
         )
 
         self.copy_logout_button.setEnabled(
             self.logout_label.text()
-            != "Not set"
+            not in ("Not set", "-")
         )
 
         self.copy_death_button.setEnabled(
             self.death_label.text()
-            != "Not set"
+            not in ("Not set", "-")
         )
 
         self.copy_home_button.setEnabled(
             self.home_label.text()
-            != "Not set"
+            not in ("Not set", "-")
         )
 
         self.copy_world_id_button.setEnabled(
@@ -517,7 +549,7 @@ class WorldsTab(QWidget):
         )
 
     def copy_location(self, text):
-        if not text or text == "Not set":
+        if not text or text in ("Not set", "-"):
             return
 
         QApplication.clipboard().setText(

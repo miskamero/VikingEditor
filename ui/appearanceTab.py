@@ -12,13 +12,16 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QPalette
 from data.beards import VALHEIM_BEARDS
 from data.hairs import VALHEIM_HAIRS
+from ui.tabStyle import detail_layout, polish_forms
 
 class AppearanceTab(QWidget):
     def __init__(self):
         super().__init__()
         self.player_data = None
 
-        main_layout = QVBoxLayout(self)
+        main_layout = detail_layout(
+            self, "Appearance", "Customize your Viking's model, hairstyle, and colors.", scroll=True
+        )
 
         # 1. Model & Style Group
         style_group = QGroupBox("Physical Customization")
@@ -51,9 +54,11 @@ class AppearanceTab(QWidget):
         skin_vbox.addWidget(QLabel("Skin Tone:"))
         self.btn_skin_color = QPushButton("Pick Skin Color")
         self.skin_preview = QWidget()
-        self.skin_preview.setFixedSize(100, 30)
+        self.skin_preview.setMinimumHeight(100)
         self.skin_preview.setAutoFillBackground(True)
         skin_vbox.addWidget(self.skin_preview)
+        self.skin_color_label = QLabel()
+        skin_vbox.addWidget(self.skin_color_label)
         skin_vbox.addWidget(self.btn_skin_color)
         color_layout.addLayout(skin_vbox)
 
@@ -64,9 +69,11 @@ class AppearanceTab(QWidget):
         hair_vbox.addWidget(QLabel("Hair/Beard Color:"))
         self.btn_hair_color = QPushButton("Pick Hair Color")
         self.hair_preview = QWidget()
-        self.hair_preview.setFixedSize(100, 30)
+        self.hair_preview.setMinimumHeight(100)
         self.hair_preview.setAutoFillBackground(True)
         hair_vbox.addWidget(self.hair_preview)
+        self.hair_color_label = QLabel()
+        hair_vbox.addWidget(self.hair_color_label)
         hair_vbox.addWidget(self.btn_hair_color)
         color_layout.addLayout(hair_vbox)
 
@@ -82,6 +89,9 @@ class AppearanceTab(QWidget):
 
         # no female beard, klinoff is questioning?
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
+        polish_forms(self)
+        self.update_color_preview(self.skin_preview, self.current_skin_rgb)
+        self.update_color_preview(self.hair_preview, self.current_hair_rgb)
 
     def on_model_changed(self, index):
         selected_model = self.model_combo.currentData()
@@ -132,6 +142,12 @@ class AppearanceTab(QWidget):
         palette = widget.palette()
         palette.setColor(QPalette.Window, QColor(r, g, b))
         widget.setPalette(palette)
+        color = QColor(r, g, b)
+        widget.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #d7dde0; border-radius: 8px;"
+        )
+        label = self.skin_color_label if widget is self.skin_preview else self.hair_color_label
+        label.setText(f"{color.name().upper()}   ·   RGB {r}, {g}, {b}")
 
     def choose_skin_color(self):
         r = int(self.current_skin_rgb[0] * 255)
