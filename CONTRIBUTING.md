@@ -76,6 +76,28 @@ The tests cover item validation, binary encoding, player-data and `.fch` round t
 Add regression tests under `tests/test_*.py`. Use `subTest` for boundary cases, `TemporaryDirectory` for file operations, and the shared Qt test setup for widgets. These tests check application behavior, not screenshot appearance, the packaged
 executable, or compatibility with a running game. Continue to review UI changes visually and verify save compatibility separately when changing the file format.
 
+### Standalone Windows build
+
+Build with the checked-in spec so native dependency hooks are applied:
+
+```sh
+python.exe -m PyInstaller --clean --noconfirm VikingEditor.spec
+```
+
+The result is `dist/VikingEditor.exe`. The FMOD library required by UnityPy's
+export-module imports is bundled by `packaging/hooks/hook-fmod_toolkit.py`.
+Additional hooks collect the texture decoder's CPU-detection tables and modules.
+Extracted Valheim item icons remain in the user's local cache, outside the EXE.
+
+To verify the frozen sprite-export dependencies separately:
+
+```sh
+python.exe -m PyInstaller --clean --noconfirm --onefile --additional-hooks-dir packaging/hooks --distpath build/frozen-check --workpath build/frozen-check-work --specpath build tools/checkFrozenIcons.py
+.\build\frozen-check\checkFrozenIcons.exe
+```
+
+The GitHub Actions test workflow also builds and runs this frozen check.
+
 ### Commit messages
 
 Please use clear and descriptive commit messages.

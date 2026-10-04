@@ -7,7 +7,9 @@
 /build
 /dist
 *.spec
+!VikingEditor.spec
 /backups
+*.pyc
 
 !info.txt
 !requirements.txt

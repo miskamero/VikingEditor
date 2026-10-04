@@ -40,3 +40,9 @@ jobs:
 
       - name: Run unittest suite
         run: python -m unittest discover -s tests -t . -v
+
+      - name: Build frozen icon dependency check
+        run: python -m PyInstaller --noconfirm --onefile --additional-hooks-dir packaging/hooks --distpath build/frozen-check --workpath build/frozen-check-work --specpath build tools/checkFrozenIcons.py
+
+      - name: Check frozen icon dependencies
+        run: .\build\frozen-check\checkFrozenIcons.exe
