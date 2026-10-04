@@ -118,15 +118,22 @@ class InventoryTab(QWidget):
                 []
             ).copy()
 
-        for i in reversed(range(self.grid_layout.count())):
-            widget = self.grid_layout.itemAt(i).widget()
-            if widget is not None:
-                widget.setParent(None)
-
-        self.slots.clear()
+        # Keep existing slots alive saves memory and avoids flickering but we need to remove any slots that are now out of bounds
+        for position, slot in list(self.slots.items()):
+            if position[1] >= rows:
+                self.grid_layout.removeWidget(slot)
+                slot.hide()
+                slot.clicked.disconnect()
+                slot.customContextMenuRequested.disconnect()
+                slot.deleteLater()
+                del self.slots[position]
+            else:
+                slot.clear_item()
 
         for y in range(rows):
             for x in range(self.GRID_WIDTH):
+                if (x, y) in self.slots:
+                    continue
                 slot = InventorySlot(x, y, self)
 
                 slot.setContextMenuPolicy(
@@ -134,13 +141,11 @@ class InventoryTab(QWidget):
                 )
 
                 slot.customContextMenuRequested.connect(
-                    lambda pos, s=slot:
-                    self.show_slot_menu(pos, s)
+                    self.on_slot_context_menu
                 )
 
                 slot.clicked.connect(
-                    lambda checked=False, s=slot:
-                    self.on_slot_clicked(s)
+                    self.on_slot_button_clicked
                 )
 
                 self.grid_layout.addWidget(
@@ -217,8 +222,20 @@ class InventoryTab(QWidget):
             if slot.item_data:
                 slot.update_visuals()
 
+    def on_slot_button_clicked(self, checked=False):
+        self.on_slot_clicked(self.sender())
+
+    def on_slot_context_menu(self, position):
+        self.show_slot_menu(position, self.sender())
+
+    def is_current_slot(self, slot):
+        return (self.player_data is not None and slot is not None
+                and self.slots.get((slot.grid_x, slot.grid_y)) is slot)
+
     def on_slot_clicked(self, slot: InventorySlot):
         """Standard left-click action on a slot."""
+        if not self.is_current_slot(slot):
+            return
         if slot.item_data:
             self.edit_slot_item(slot)
         else:
@@ -226,6 +243,8 @@ class InventoryTab(QWidget):
 
     def show_slot_menu(self, position, slot: InventorySlot):
         """Right-click context menu options."""
+        if not self.is_current_slot(slot):
+            return
         menu = QMenu()
 
         if slot.item_data:
@@ -254,15 +273,24 @@ class InventoryTab(QWidget):
                 self.paste_slot_item(slot)
 
     def edit_slot_item(self, slot: InventorySlot):
+        if not self.is_current_slot(slot) or not slot.item_data:
+            return
+        player_data = self.player_data
+        original_item = slot.item_data
         dialog = ItemEditDialog(
             slot.item_data,
             self,
             self.get_inventory_rows()
         )
-        if dialog.exec() == QDialog.Accepted:
-            updated = dialog.get_updated_data()
-            slot.item_data.update(updated)
-            slot.update_visuals()
+        try:
+            if (dialog.exec() == QDialog.Accepted
+                    and self.player_data is player_data
+                    and self.is_current_slot(slot) and slot.item_data is original_item):
+                updated = dialog.get_updated_data()
+                original_item.update(updated)
+                slot.update_visuals()
+        finally:
+            dialog.deleteLater()
 
     def remove_slot_item(self, slot: InventorySlot):
         confirm = QMessageBox.question(
@@ -335,6 +363,9 @@ class InventoryTab(QWidget):
         slot.set_item(pasted_item)
 
     def add_item_to_slot(self, slot: InventorySlot):
+        if not self.is_current_slot(slot) or slot.item_data:
+            return
+        player_data = self.player_data
         new_item = {
             "prefab": "",
             "stack": 1,
@@ -357,12 +388,16 @@ class InventoryTab(QWidget):
             self,
             self.get_inventory_rows()
         )
-        if dialog.exec() == QDialog.Accepted:
-            final_item = dialog.get_updated_data()
-            new_item.update(final_item)
-            
-            self.player_data["inventory"].append(new_item)
-            slot.set_item(new_item)
+        try:
+            if (dialog.exec() == QDialog.Accepted
+                    and self.player_data is player_data
+                    and self.is_current_slot(slot) and not slot.item_data):
+                final_item = dialog.get_updated_data()
+                new_item.update(final_item)
+                player_data["inventory"].append(new_item)
+                slot.set_item(new_item)
+        finally:
+            dialog.deleteLater()
 
     def save_changes(self):
         if not self.player_data:

@@ -1,6 +1,7 @@
 from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+from subscripts.itemDatabase import get_item_icon_path
 from PySide6.QtWidgets import (
     QPushButton,
     QLabel,
@@ -304,8 +305,14 @@ class InventorySlot(QPushButton):
         )
 
         icon = get_item_icon(prefab)
+        cached_icon = get_item_icon_path(prefab, self.item_data.get("variant", 0))
+        cached_pixmap = QPixmap(str(cached_icon)) if cached_icon else QPixmap()
 
-        if icon == "❓":
+        if not cached_pixmap.isNull():
+            self.icon_label.setPixmap(cached_pixmap.scaled(
+                44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            ))
+        elif icon == "❓":
             self.icon_label.setText(icon)
             self.icon_label.setStyleSheet("""
                 QLabel {

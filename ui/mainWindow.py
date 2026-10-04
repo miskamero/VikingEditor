@@ -411,6 +411,8 @@ class MainWindow(QMainWindow):
                 return
 
             reload_item_database()
+            for slot in self.inventory_tab.slots.values():
+                slot.update_visuals()
 
             QMessageBox.information(
                 self,

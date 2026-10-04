@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.support import ITEMS, item, create_empty_player_data, create_new_character
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtTest import QTest
 from ui.inventoryTab import InventoryTab
@@ -34,6 +34,12 @@ class QtTestCase(unittest.TestCase):
         database = patch("ui.itemSearchWidget.load_item_database", return_value=ITEMS)
         database.start()
         self.addCleanup(database.stop)
+        icons = patch("ui.inventorySlot.get_item_icon_path", return_value=None)
+        icons.start()
+        self.addCleanup(icons.stop)
+        picker_icons = patch("ui.itemSearchWidget.get_item_icon_path", return_value=None)
+        picker_icons.start()
+        self.addCleanup(picker_icons.stop)
 
     def widget(self, factory, *args):
         widget = factory(*args)
@@ -66,6 +72,70 @@ class InventoryTests(QtTestCase):
         before = deepcopy(self.data)
         self.tab.clear_all_cheated_flags()
         self.assertEqual(self.data, before)
+
+    def test_save_switch_reuses_slots_without_duplicate_click_handlers(self):
+        original = self.tab.slots[(0, 0)]
+        for _ in range(3):
+            self.tab.load_data(create_empty_player_data())
+        self.assertIs(self.tab.slots[(0, 0)], original)
+        with patch.object(self.tab, "add_item_to_slot") as add:
+            original.click()
+        add.assert_called_once_with(original)
+
+    def test_switch_back_then_apply_three_amber_pearls(self):
+        import gc
+        for _ in range(5):
+            save1 = create_empty_player_data()
+            save2 = create_empty_player_data()
+            save2["uniques"] = ["invrows 6"]
+            for data in (save1, save2, save1):
+                self.tab.load_data(data)
+                self.app.processEvents()
+            errors = []
+
+            def apply_item():
+                dialog = self.app.activeModalWidget()
+                try:
+                    dialog.prefab_input.set_prefab("AmberPearl")
+                    dialog.stack_input.setValue(3)
+                    gc.collect()
+                    dialog.apply_button.click()
+                except Exception as exc:
+                    errors.append(exc)
+                    if dialog:
+                        dialog.reject()
+
+            QTimer.singleShot(0, apply_item)
+            self.tab.slots[(0, 0)].click()
+            self.assertEqual(errors, [])
+            self.assertEqual(len(save1["inventory"]), 1)
+            self.assertEqual(save1["inventory"][0]["prefab"], "AmberPearl")
+            self.assertEqual(save1["inventory"][0]["stack"], 3)
+            self.assertEqual(save2["inventory"], [])
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.assertEqual(self.tab.findChildren(ItemEditDialog), [])
+
+    def test_dialog_cannot_apply_to_a_different_save(self):
+        replacement = create_empty_player_data()
+        slot = self.tab.slots[(2, 0)]
+        with patch("ui.inventoryTab.ItemEditDialog") as dialog_type:
+            dialog = dialog_type.return_value
+            def switch_save():
+                self.tab.load_data(replacement)
+                return QDialog.Accepted
+            dialog.exec.side_effect = switch_save
+            self.tab.add_item_to_slot(slot)
+            dialog.get_updated_data.assert_not_called()
+            dialog.deleteLater.assert_called_once()
+        self.assertEqual(replacement["inventory"], [])
+
+    def test_removed_slots_are_deleted_on_qt_event_loop(self):
+        from shiboken6 import isValid
+        self.tab.deeper_pockets_checkbox.setChecked(True)
+        removed = self.tab.slots[(0, 5)]
+        self.tab.wider_pockets_checkbox.setChecked(False)
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.assertFalse(isValid(removed))
 
     def test_no_flags_shows_information(self):
         for value in self.data["inventory"]:

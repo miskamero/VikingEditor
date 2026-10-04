@@ -1,6 +1,10 @@
 from pathlib import Path
 import json
 import os
+import hashlib
+import io
+import tempfile
+from functools import lru_cache
 
 import UnityPy
 from UnityPy.enums import ClassIDType
@@ -132,6 +136,76 @@ def load_item_database():
         return {}
 
 
+@lru_cache(maxsize=1)
+def load_item_icons():
+    """Read optional icon metadata; older item databases remain supported."""
+    try:
+        data = json.loads(ITEM_DATABASE_PATH.read_text(encoding="utf-8"))
+        return {entry["prefab"]: entry.get("icons", [])
+                for entry in data.get("items", {}).values()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def get_item_icon_path(prefab, variant=0):
+    icons = load_item_icons().get(prefab, [])
+    if not isinstance(icons, list) or not icons:
+        return None
+    if not isinstance(variant, int) or not 0 <= variant < len(icons):
+        variant = 0
+    for name in (icons[variant], icons[0]):
+        # Only content-addressed PNG names inside our own cache are accepted.
+        if (isinstance(name, str) and len(name) == 68 and name.endswith(".png")
+                and all(c in "0123456789abcdef" for c in name[:-4])):
+            path = ITEM_DATABASE_PATH.parent / "item_icons" / name
+            if path.is_file():
+                return path
+    return None
+
+
+def extract_item_icons(component, sprite_cache):
+    """Export shared icon variants, retaining empty entries for missing sprites."""
+    try:
+        references = component.read().m_itemData.m_shared.m_icons
+    except Exception:
+        return []
+    icons = []
+    for reference in references or []:
+        try:
+            sprite = reference.deref()
+            if sprite is None:
+                icons.append(None)
+                continue
+            key = (id(sprite.assets_file), sprite.path_id)
+            if key in sprite_cache:
+                icons.append(sprite_cache[key])
+                continue
+            # UnityPy handles sprite atlas cropping and alpha reconstruction.
+            image = sprite.read().image.convert("RGBA")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            payload = buffer.getvalue()
+        except Exception as exc:
+            print(f"Warning: could not decode item icon: {exc}")
+            icons.append(None)
+            continue
+        # Disk errors fail the update, while decoding failures above use fallback icons.
+        filename = hashlib.sha256(payload).hexdigest() + ".png"
+        folder = ITEM_DATABASE_PATH.parent / "item_icons"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / filename
+        with tempfile.NamedTemporaryFile(dir=folder, delete=False) as output:
+            temporary = Path(output.name)
+        try:
+            temporary.write_bytes(payload)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        sprite_cache[key] = filename
+        icons.append(filename)
+    return icons
+
+
 def find_valheim_bundles(valheim_dir):
     bundles_dir = get_bundles_dir(valheim_dir)
 
@@ -159,12 +233,6 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
 
     env = UnityPy.Environment()
 
-    bundle_files = [
-        path
-        for path in get_bundles_dir(valheim_dir).iterdir()
-        if path.is_file()
-    ]
-
     for index, bundle_path in enumerate(bundle_files, 1):
         message = f"Loading {index}/{len(bundle_files)}"
         print(f"\r{message}", end="", flush=True)
@@ -190,11 +258,15 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
 
     # prefab name -> localized shared name
     items = {}
+    item_components = {}
 
     game_objects_checked = 0
     itemdrops_checked = 0
 
     for obj in env.objects:
+
+        if cancel_callback and cancel_callback():
+            return None
 
         if obj.type != ClassIDType.GameObject:
             continue
@@ -248,6 +320,7 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
                     and shared_name.startswith("$item_")
                 ):
                     items[prefab_name] = shared_name
+                    item_components[prefab_name] = component
 
                 break
 
@@ -258,8 +331,13 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
     hash_to_item = {}
 
     hash_collisions = []
+    sprite_cache = {}
 
-    for prefab_name, shared_name in sorted(items.items()):
+    for index, (prefab_name, shared_name) in enumerate(sorted(items.items()), 1):
+        if cancel_callback and cancel_callback():
+            return None
+        if progress_callback:
+            progress_callback(index, len(items), f"Extracting item icons: {index}/{len(items)}")
 
         prefab_hash = get_stable_hash_code(prefab_name)
 
@@ -280,12 +358,14 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         hash_to_item[prefab_hash] = {
             "prefab": prefab_name,
             "shared_name": shared_name,
+            "icons": extract_item_icons(item_components[prefab_name], sprite_cache),
         }
 
     output = {
         "valheim_version": "1.0",
         "source": str(get_bundles_dir(valheim_dir)),
         "item_count": len(hash_to_item),
+        "icon_count": len(sprite_cache),
         "game_objects_checked": game_objects_checked,
         "itemdrops_checked": itemdrops_checked,
         "hash_collision_count": len(hash_collisions),
@@ -303,16 +383,18 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         exist_ok=True,
     )
 
-    with ITEM_DATABASE_PATH.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            output,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    if cancel_callback and cancel_callback():
+        return None
+    # Publish only a complete database; cancelled scans leave the old one usable.
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                     dir=ITEM_DATABASE_PATH.parent, delete=False) as file:
+        temporary = Path(file.name)
+        json.dump(output, file, indent=2, ensure_ascii=False)
+    try:
+        temporary.replace(ITEM_DATABASE_PATH)
+    finally:
+        temporary.unlink(missing_ok=True)
+    load_item_icons.cache_clear()
 
     print()
     print("========================================")

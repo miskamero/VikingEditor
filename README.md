@@ -34,7 +34,10 @@ For automated test commands and coverage, see [Automated tests](CONTRIBUTING.md#
   * Edit items in your character's inventory.
   * Modify stack sizes, durability, quality, variants, equipped state, and other supported item data.
   * Search and select items using the integrated item database.
+  * Browse icon previews in the item editor, search multiple words in any order, and preview style variants before applying changes. Custom prefab IDs can still be entered directly.
   * Supports custom item data and Valheim item metadata.
+  * Displays original Valheim item icons, including style variants. Run **File → Update Item Database** once to extract icons from your installed game; existing databases without icons continue to work with category icons.
+  * Extracted icons are cached alongside the item database in `VikingEditor/item_icons` under your local application-data directory. Updating the database refreshes visible inventory slots immediately. Missing icons use the existing category artwork.
   * Toggle **Spawned in with cheats** in the item editor. Flagged slots show a red **\u00d7** badge and a tooltip.
   * Use **Clear All Cheated Flags** to clear the flag from every inventory item after confirmation. Save the character to apply these changes to the `.fch` file.
 
