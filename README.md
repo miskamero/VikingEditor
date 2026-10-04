@@ -10,8 +10,15 @@ The tour uses an illustrative demo character. [View the inventory screenshot](do
 
 **Find it. Preview it. Make it yours.** Search your item library, preview styles, and edit your Viking's inventory in one place.
 
+## Support
 
-</details>
+VikingEditor is free and open source.
+
+If you find the project useful and want to support continued development, maintenance, and compatibility updates, you can support the project here:
+
+**[Buy Me a Coffee](https://buymeacoffee.com/vikingeditor)**
+
+Donations are completely optional. VikingEditor will remain free and open source.
 
 **VikingEditor 2.0** introduces a significantly expanded character editor, automatic backups, character creation, improved save management, and dedicated views for character progress, statistics, and world data.
 
