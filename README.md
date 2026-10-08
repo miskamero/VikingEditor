@@ -223,9 +223,14 @@ python -m venv venv
 
 Activate it:
 
-```powershell
-.\venv\Scripts\Activate.ps1
-```
+| Platform | Shell      | Command to activate virtual environment |
+|----------|------------|-----------------------------------------|
+| POSIX    | bash/zsh   | $ source <venv>/bin/activate            |
+|          | fish       | $ source <venv>/bin/activate.fish       |
+|          | csh/tcsh   | $ source <venv>/bin/activate.csh        |
+|          | pwsh       | $ <venv>/bin/Activate.ps1               |
+| Windows  | cmd.exe    | C:\> <venv>\Scripts\activate.bat        |
+|          | PowerShell | PS C:\> <venv>\Scripts\Activate.ps1     |
 
 #### 3. Install Dependencies
 
