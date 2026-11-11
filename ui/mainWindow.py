@@ -471,7 +471,7 @@ class MainWindow(QMainWindow):
 
             self.player_data = unpack_player_data_hex(player_hex)
 
-            self.inventory_tab.load_data(self.player_data)
+            self.inventory_tab.load_data(self.player_data, self.root_save)
             self.skills_tab.load_data(self.player_data)
             self.stats_tab.load_data(
                 self.player_data,
@@ -549,7 +549,7 @@ class MainWindow(QMainWindow):
             self.loaded_backup = False
 
             self.inventory_tab.load_data(
-                self.player_data
+                self.player_data, self.root_save
             )
 
             self.skills_tab.load_data(
@@ -644,7 +644,7 @@ class MainWindow(QMainWindow):
             if player_hex:
                 # 3. Unpack inner structures
                 self.player_data = unpack_player_data_hex(player_hex)
-                self.inventory_tab.load_data(self.player_data)
+                self.inventory_tab.load_data(self.player_data, self.root_save)
                 self.skills_tab.load_data(self.player_data)
                 self.stats_tab.load_data(self.player_data, self.root_save)
                 self.appearance_tab.load_data(self.player_data)

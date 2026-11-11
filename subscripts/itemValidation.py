@@ -14,7 +14,7 @@ MIN_DURABILITY = 0.0
 MAX_DURABILITY = 99999.0
 
 
-def validate_item(item, player_data=None):
+def validate_item(item, player_data=None, *, inventory_rows=None):
     errors = []
 
     if not isinstance(item, dict):
@@ -61,8 +61,8 @@ def validate_item(item, player_data=None):
             f"Grid X must be between 0 and {GRID_WIDTH - 1}."
         )
 
-    inventory_rows = DEFAULT_GRID_HEIGHT
-
+    if inventory_rows is None:
+        inventory_rows = DEFAULT_GRID_HEIGHT
     if player_data:
         uniques = player_data.get("uniques", [])
 

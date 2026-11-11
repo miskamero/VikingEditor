@@ -488,6 +488,124 @@ class WorldsTests(QtTestCase):
 
 
 class SkillsTests(QtTestCase):
+    def skill_row(self, tab, skill_id):
+        return next(row for row in range(tab.table.rowCount())
+                    if tab.table.item(row, 0).data(Qt.ItemDataRole.UserRole) == skill_id)
+
+    def test_unknown_skills_are_shown_and_survive_vanilla_edits(self):
+        self.data["skills"] = [
+            {"id": 12345, "level": 234.56789, "xp": 1234567.12345, "metadata": {"mod": "keep"}},
+            {"id": 1, "level": 12.3456789, "xp": 0.123456789},
+            {"id": -123, "name": "Sailing", "level": -2.5, "xp": 4.25},
+            {"id": 0, "level": 7.0, "xp": 2.0},
+        ]
+        original = deepcopy(self.data)
+        tab = self.widget(SkillsTab)
+        tab.load_data(self.data)
+        self.assertEqual(tab.table.item(self.skill_row(tab, 12345), 0).text(), "Unknown Skill (ID: 12345)")
+        self.assertEqual(tab.table.item(self.skill_row(tab, -123), 0).text(), "Sailing")
+        self.assertEqual(tab.table.item(self.skill_row(tab, 0), 0).text(), "Unknown Skill (ID: 0)")
+        tab.save_changes()
+        self.assertEqual(self.data, original)
+        tab.table.cellWidget(self.skill_row(tab, 1), 1).setValue(15.123456789)
+        tab.save_changes()
+        self.assertEqual(self.data["skills"][0], original["skills"][0])
+        self.assertEqual(self.data["skills"][2:], original["skills"][2:])
+        self.assertEqual(self.data["skills"][1]["xp"], original["skills"][1]["xp"])
+        self.assertEqual(self.data["skills"][1]["level"], 15.123456789)
+
+    def test_custom_skill_edits_allow_non_vanilla_ranges_and_keep_metadata(self):
+        self.data["skills"] = [{"id": 12345, "level": 250.25, "xp": 1.25,
+                                "metadata": {"opaque": [1, 2]}}]
+        tab = self.widget(SkillsTab)
+        tab.load_data(self.data)
+        row = self.skill_row(tab, 12345)
+        tab.table.cellWidget(row, 1).setValue(512.125)
+        tab.table.cellWidget(row, 2).setValue(2000000.25)
+        tab.save_changes()
+        self.assertEqual(self.data["skills"], [{"id": 12345, "level": 512.125, "xp": 2000000.25,
+                                               "metadata": {"opaque": [1, 2]}}])
+
+    def test_custom_skills_survive_bulk_actions_and_lock_cycles(self):
+        custom = {"id": 12345, "level": 234.56789, "xp": 1.23456789, "name": "Custom"}
+        self.data["skills"] = [deepcopy(custom), {"id": 1, "level": 2, "xp": 3}]
+        tab = self.widget(SkillsTab)
+        tab.load_data(self.data)
+        row = self.skill_row(tab, 12345)
+        for locked in (False, True, False):
+            tab.lock_skill(row) if locked else tab.unlock_skill(row)
+            self.assertEqual(tab.table.cellWidget(row, 1).isEnabled(), not locked)
+            self.assertEqual(tab.table.cellWidget(row, 2).isEnabled(), not locked)
+            for action in (tab.maximize_all_skills, tab.set_all_skills0):
+                action()
+                tab.save_changes()
+                self.assertEqual(self.data["skills"][0], custom)
+        self.assertIn("Custom skills are unchanged", tab.btn_max_all.toolTip())
+        self.assertIn("saved data is retained", tab.table.cellWidget(row, 3).toolTip())
+
+    def test_duplicate_skill_records_are_not_collapsed_or_reordered(self):
+        self.data["skills"] = [{"id": 12345, "level": 2.5, "xp": 3.5},
+                               {"id": 1, "level": 4.5, "xp": 5.5},
+                               {"id": 12345, "level": 6.5, "xp": 7.5}]
+        original = deepcopy(self.data)
+        tab = self.widget(SkillsTab)
+        tab.load_data(self.data)
+        tab.save_changes()
+        self.assertEqual(self.data, original)
+
+    def test_xp_help_and_full_float32_precision(self):
+        import struct
+        from PySide6.QtGui import QValidator
+
+        tab = self.widget(SkillsTab)
+        self.assertEqual(tab.table.horizontalHeaderItem(2).text(), "XP Progress")
+        self.assertIn("Fractional skill levels", tab.table.horizontalHeaderItem(2).toolTip())
+        for raw in (b"\x01\x00\x00\x00", b"\xff\xff\x7f\x7f", b"\x01\x00\x80\x3f"):
+            value = struct.unpack("<f", raw)[0]
+            with self.subTest(value=value):
+                self.data["skills"] = [{"id": 12345, "level": value, "xp": value}]
+                tab.load_data(self.data)
+                row = self.skill_row(tab, 12345)
+                for column in (1, 2):
+                    widget = tab.table.cellWidget(row, column)
+                    self.assertEqual(struct.pack("<f", widget.value()), raw)
+                    self.assertEqual(widget.validate(widget.text(), 0)[0], QValidator.State.Acceptable)
+                    widget.interpretText()
+                tab.save_changes()
+                self.assertEqual(struct.pack("<f", self.data["skills"][0]["level"]), raw)
+                self.assertEqual(struct.pack("<f", self.data["skills"][0]["xp"]), raw)
+
+    def test_custom_skills_and_precision_survive_all_supported_save_versions(self):
+        from tests.support import playerDataUtil as player
+
+        for outer in (46, 47):
+            for nested, inventory in ((33, 109), (34, 110)):
+                with self.subTest(outer=outer, nested=nested), tempfile.TemporaryDirectory() as directory:
+                    data = create_empty_player_data()
+                    data.update(version=nested, inventory_version=inventory)
+                    data["skills"] = [{"id": 12345, "level": 234.56789, "xp": 1234567.12345},
+                                      {"id": 1, "level": 12.3456789, "xp": 0.123456789}]
+                    data["custom_data"] = {"mod.skills": "opaque mod state"}
+                    data["trailing_data_hex"] = "cafe"
+                    original_hex = player.pack_player_data_hex(data)
+                    loaded = player.unpack_player_data_hex(original_hex)
+                    tab = self.widget(SkillsTab)
+                    tab.load_data(loaded)
+                    tab.save_changes()
+                    self.assertEqual(player.pack_player_data_hex(loaded), original_hex)
+                    tab.table.cellWidget(self.skill_row(tab, 1), 1).setValue(25.5)
+                    tab.save_changes()
+                    expected = deepcopy(loaded)
+                    self.root.update(version=outer, player_data_hex=player.pack_player_data_hex(loaded))
+                    wrapper = Path(directory) / "source.json"
+                    target = Path(directory) / "character.fch"
+                    wrapper.write_text(json.dumps(self.root), encoding="utf-8")
+                    with redirect_stdout(io.StringIO()):
+                        compile_fch(str(wrapper), str(target))
+                        result = decompile_fch(str(target))
+                    self.assertEqual(result["version"], outer)
+                    self.assertEqual(player.unpack_player_data_hex(result["player_data_hex"]), expected)
+
     def test_maximize_and_reset_do_not_unlock_other_skills(self):
         self.data["skills"] = [{"id": 1, "level": 12, "xp": 3}]
         tab = self.widget(SkillsTab)

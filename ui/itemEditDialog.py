@@ -175,7 +175,7 @@ class ItemEditDialog(QDialog):
         except ValueError as error:
             QMessageBox.warning(self, "Invalid Item", str(error))
             return
-        errors = validate_item(item, {"uniques": [f"invrows {self.inventory_rows}"]})
+        errors = validate_item(item, inventory_rows=self.inventory_rows)
         if errors:
             QMessageBox.warning(self, "Invalid Item", "The item contains invalid data:\n\n" + "\n".join(errors))
             return

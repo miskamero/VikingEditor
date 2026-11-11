@@ -450,6 +450,8 @@ def unpack_player_data_hex(hex_string: str) -> dict:
     # accumulator
 
     out["skill_version"] = pkg.read_int32()
+    if out["skill_version"] != 2:
+        raise ValueError(f"Unsupported skill data version: {out['skill_version']}")
 
     skill_count = pkg.read_int32()
 
@@ -520,6 +522,8 @@ def pack_player_data_hex(data: dict) -> str:
         raise ValueError(f"Unsupported player data version: {version}")
     if inventory_version not in (109, 110):
         raise ValueError(f"Unsupported inventory version: {inventory_version}")
+    if data.get("skill_version", 2) != 2:
+        raise ValueError(f"Unsupported skill data version: {data['skill_version']}")
     if version == 33 and (data.get("pseudo_drop_counters") or data.get("item_upgrade_seeds")):
         raise ValueError("Player version 33 cannot store version 34 counters or upgrade seeds")
 

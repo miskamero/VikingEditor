@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QGroupBox
 )
 
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtGui import QPainter, QPen, QColor, QDoubleValidator
 
 from PySide6.QtCore import Qt
 
@@ -19,6 +19,19 @@ from data.skills import VALHEIM_SKILLS
 
 
 class ModernSpinBox(QDoubleSpinBox):
+    def textFromValue(self, value):
+        # Compact display without rounding the stored float32 to fixed decimals.
+        return self.locale().toString(value, "g", 17)
+
+    def valueFromText(self, text):
+        return self.locale().toDouble(text)[0]
+
+    def validate(self, text, position):
+        validator = QDoubleValidator(self.minimum(), self.maximum(), 149)
+        validator.setLocale(self.locale())
+        validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        return validator.validate(text, position)
+
     def paintEvent(self, event):
         super().paintEvent(event)
 
@@ -84,9 +97,11 @@ class SkillsTab(QWidget):
 
         self.btn_max_all = QPushButton("Maximize All")
         self.btn_max_all.setMinimumHeight(34)
+        self.btn_max_all.setToolTip("Maximize unlocked vanilla skills. Custom skills are unchanged.")
 
         self.btn_set_all0 = QPushButton("Reset All")
         self.btn_set_all0.setMinimumHeight(34)
+        self.btn_set_all0.setToolTip("Reset unlocked vanilla levels to zero. Custom skills are unchanged.")
 
         self.skill_count_label = QLabel("Skills: 0")
         self.skill_count_label.setAlignment(
@@ -107,9 +122,15 @@ class SkillsTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Skill",
             "Level",
-            "XP Accumulator",
+            "XP Progress",
             "Status",
         ])
+        self.xp_tooltip = (
+            "XP earned toward the next skill level, not a percentage. "
+            "Fractional skill levels are separate and can result from skill loss on death. "
+            "Mods may use different progression rules."
+        )
+        self.table.horizontalHeaderItem(2).setToolTip(self.xp_tooltip)
 
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -268,19 +289,24 @@ class SkillsTab(QWidget):
     def load_data(self, player_data):
         self.player_data = player_data
 
-        saved_skills = {
-            skill.get("id"): skill
-            for skill in player_data.get("skills", [])
-        }
-
         self.table.setRowCount(0)
+        self.skill_records = []
+        saved_skills = player_data.get("skills", [])
+        saved_rows = {}
+        new_rows = []
 
-        # Show every real skill known to the editor. klinoff purposfuly ignores skill 0
+        # Keep the built-in ordering and offer missing vanilla skills to unlock.
         for skill_id, skill_name in VALHEIM_SKILLS.items():
             if skill_id == 0:
                 continue
 
-            skill_data = saved_skills.get(skill_id)
+            index = next((i for i, skill in enumerate(saved_skills)
+                          if i not in saved_rows and skill.get("id") == skill_id), None)
+            skill_data = saved_skills[index] if index is not None else None
+            if index is not None:
+                saved_rows[index] = self.table.rowCount()
+            else:
+                new_rows.append(self.table.rowCount())
 
             self.add_skill_row(
                 skill_id,
@@ -288,6 +314,17 @@ class SkillsTab(QWidget):
                 skill_data
             )
 
+        # Include unknown IDs (even 0) and duplicate records without collapsing
+        # them. The game stores no skill names; optional imported names survive.
+        for index, skill in enumerate(saved_skills):
+            if index not in saved_rows:
+                skill_id = skill["id"]
+                name = skill.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    name = VALHEIM_SKILLS.get(skill_id) if skill_id else None
+                saved_rows[index] = self.table.rowCount()
+                self.add_skill_row(skill_id, name or f"Unknown Skill (ID: {skill_id})", skill)
+        self.save_order = [saved_rows[i] for i in range(len(saved_skills))] + new_rows
         self.update_skill_count()
 
     def add_skill_row(
@@ -298,6 +335,9 @@ class SkillsTab(QWidget):
     ):
         row = self.table.rowCount()
         self.table.insertRow(row)
+        self.skill_records.append(dict(skill_data) if skill_data is not None
+                                  else {"id": skill_id, "level": 0.0, "xp": 0.0})
+        vanilla = skill_id != 0 and skill_id in VALHEIM_SKILLS
 
         skill_item = QTableWidgetItem(skill_name)
 
@@ -319,8 +359,14 @@ class SkillsTab(QWidget):
 
         level_spin = ModernSpinBox()
 
-        level_spin.setRange(0.0, 100.0)
-        level_spin.setDecimals(1)
+        # 149 fractional places cover every finite binary32 value, including
+        # subnormals. Custom skill limits cannot be inferred from the save.
+        float_max = 3.4028234663852886e38
+        level_spin.setDecimals(149)
+        level_spin.setRange(-float_max, float_max)
+        if vanilla:
+            level = skill_data.get("level", 0.0) if skill_data is not None else 0.0
+            level_spin.setRange(min(0.0, level), max(100.0, level))
         level_spin.setSingleStep(1.0)
         level_spin.setMinimumWidth(120)
 
@@ -345,8 +391,9 @@ class SkillsTab(QWidget):
 
         xp_spin = ModernSpinBox()
 
-        xp_spin.setRange(0.0, 999999.0)
-        xp_spin.setDecimals(4)
+        xp_spin.setDecimals(149)
+        xp_spin.setRange(-float_max, float_max)
+        xp_spin.setToolTip(self.xp_tooltip)
         xp_spin.setSingleStep(1.0)
         xp_spin.setMinimumWidth(160)
 
@@ -368,6 +415,10 @@ class SkillsTab(QWidget):
             2,
             xp_spin
         )
+        # Only edited properties replace original values; other record data and
+        # untouched values survive unrelated edits without widget normalization.
+        level_spin.valueChanged.connect(lambda value, r=row: self.skill_records[r].update(level=value))
+        xp_spin.valueChanged.connect(lambda value, r=row: self.skill_records[r].update(xp=value))
 
         unlocked = skill_data is not None
         status_button = QPushButton("Lock" if unlocked else "Unlock")
@@ -405,6 +456,8 @@ class SkillsTab(QWidget):
             "Unlocked: lock to remove this skill and clear its level and XP."
             if unlocked else "Locked: unlock at level 1 with zero XP."
         )
+        if not vanilla:
+            status_button.setToolTip("Lock to protect this custom skill from edits. Its saved data is retained.")
         status_button.toggled.connect(
             lambda checked, r=row: self._on_skill_toggled(r, checked)
         )
@@ -416,13 +469,18 @@ class SkillsTab(QWidget):
         status_button = self.table.cellWidget(row, 3)
         return isinstance(status_button, QPushButton) and status_button.isChecked()
 
+    def is_vanilla_skill(self, row):
+        skill_id = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        return skill_id != 0 and skill_id in VALHEIM_SKILLS
+
     def _on_skill_toggled(self, row, unlocked):
         level_widget = self.table.cellWidget(row, 1)
         xp_widget = self.table.cellWidget(row, 2)
         status_button = self.table.cellWidget(row, 3)
 
-        level_widget.setValue(1.0 if unlocked else 0.0)
-        xp_widget.setValue(0.0)
+        if self.is_vanilla_skill(row):
+            level_widget.setValue(1.0 if unlocked else 0.0)
+            xp_widget.setValue(0.0)
         level_widget.setEnabled(unlocked)
         xp_widget.setEnabled(unlocked)
         status_button.setText("Lock" if unlocked else "Unlock")
@@ -430,6 +488,11 @@ class SkillsTab(QWidget):
             "Unlocked: lock to remove this skill and clear its level and XP."
             if unlocked else "Locked: unlock at level 1 with zero XP."
         )
+        if not self.is_vanilla_skill(row):
+            status_button.setToolTip(
+                "Lock to protect this custom skill from edits. Its saved data is retained."
+                if unlocked else "Unlock to edit this custom skill. Its saved data is retained."
+            )
 
     def style_spinbox(self, widget):
         widget.setStyleSheet("""
@@ -488,6 +551,7 @@ class SkillsTab(QWidget):
             if (
                 isinstance(level_widget, QDoubleSpinBox)
                 and self.is_skill_unlocked(row)
+                and self.is_vanilla_skill(row)
             ):
                 level_widget.setValue(100.0)
 
@@ -498,6 +562,7 @@ class SkillsTab(QWidget):
             if (
                 isinstance(level_widget, QDoubleSpinBox)
                 and self.is_skill_unlocked(row)
+                and self.is_vanilla_skill(row)
             ):
                 level_widget.setValue(0.0)
 
@@ -507,7 +572,7 @@ class SkillsTab(QWidget):
 
         updated_skills = []
 
-        for row in range(self.table.rowCount()):
+        for row in self.save_order:
             skill_item = self.table.item(row, 0)
 
             level_widget = self.table.cellWidget(row, 1)
@@ -527,19 +592,12 @@ class SkillsTab(QWidget):
             ):
                 continue
 
-            # Locked skills are not written to the save.
-            if not self.is_skill_unlocked(row):
+            # Vanilla locking retains its existing removal behavior. Custom
+            # locking only prevents editing because mod reset rules are unknown.
+            if not self.is_skill_unlocked(row) and self.is_vanilla_skill(row):
                 continue
 
-            skill_id = skill_item.data(
-                Qt.ItemDataRole.UserRole
-            )
-
-            updated_skills.append({
-                "id": skill_id,
-                "level": level_widget.value(),
-                "xp": xp_widget.value(),
-            })
+            updated_skills.append(dict(self.skill_records[row]))
 
         self.player_data["skills"] = updated_skills
 

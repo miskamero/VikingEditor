@@ -60,6 +60,24 @@ def wire_payload(version=34, inventory_version=110):
 
 
 class NestedVersionTests(unittest.TestCase):
+    def test_unknown_skill_ids_and_unsupported_skill_layouts(self):
+        for version in (33, 34):
+            with self.subTest(version=version):
+                payload = wire_payload(version)[0]
+                skill_record = struct.pack("<iiiff", 2, 1, 1, 12.5, 7.25)
+                self.assertEqual(payload.count(skill_record), 1)
+                custom_record = struct.pack("<iiiff", 2, 1, -12345, 250.125, 987654.5)
+                custom_payload = payload.replace(skill_record, custom_record)
+                data = player.unpack_player_data_hex(custom_payload.hex())
+                self.assertEqual(data["skills"], [{"id": -12345, "level": 250.125, "xp": 987654.5}])
+                self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), custom_payload)
+                unsupported = payload.replace(skill_record, struct.pack("<i", 3) + skill_record[4:])
+                with self.assertRaisesRegex(ValueError, "Unsupported skill data version"):
+                    player.unpack_player_data_hex(unsupported.hex())
+                data["skill_version"] = 3
+                with self.assertRaisesRegex(ValueError, "Unsupported skill data version"):
+                    player.pack_player_data_hex(data)
+
     def test_independent_wire_fixtures_round_trip_all_versions(self):
         for version in (33, 34):
             for inventory_version in (109, 110):

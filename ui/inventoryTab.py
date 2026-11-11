@@ -11,13 +11,18 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QCheckBox,
-    QPushButton
+    QPushButton,
+    QGroupBox,
+    QLabel,
+    QScrollArea
 )
 
 from PySide6.QtCore import Qt
 
 from ui.inventorySlot import InventorySlot
 from ui.itemEditDialog import ItemEditDialog
+from subscripts.equipmentSlots import eaq_equipment, has_slot_mod_data
+from subscripts.itemValidation import validate_item
 
 class InventoryTab(QWidget):
     GRID_WIDTH = 8
@@ -27,7 +32,15 @@ class InventoryTab(QWidget):
         super().__init__()
         self.player_data = None
         
-        self.main_layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        self.main_layout = QVBoxLayout(content)
+        self.scroll_area.setWidget(content)
+        outer_layout.addWidget(self.scroll_area)
 
         self.upgrade_layout = QHBoxLayout()
 
@@ -66,6 +79,11 @@ class InventoryTab(QWidget):
         self.main_layout.addLayout(self.grid_layout)
         
         self.slots = {}
+        self.equipment_slots = []
+        self.equipment_group = QGroupBox("Mod equipment")
+        self.equipment_layout = QGridLayout(self.equipment_group)
+        self.main_layout.addWidget(self.equipment_group)
+        self.equipment_group.hide()
 
         self.wider_pockets_checkbox.stateChanged.connect(
             self.handle_wider_pockets
@@ -129,6 +147,7 @@ class InventoryTab(QWidget):
                 del self.slots[position]
             else:
                 slot.clear_item()
+                slot.setEnabled(True)
 
         for y in range(rows):
             for x in range(self.GRID_WIDTH):
@@ -163,7 +182,7 @@ class InventoryTab(QWidget):
             if (x, y) in self.slots:
                 self.slots[(x, y)].set_item(item)
 
-    def load_data(self, player_data):
+    def load_data(self, player_data, root_save=None):
         self.player_data = player_data
         self.clear_cheated_button.setEnabled(True)
 
@@ -191,9 +210,73 @@ class InventoryTab(QWidget):
         self.deeper_pockets_checkbox.blockSignals(False)
 
         self.update_inventory_grid()
+        self._loaded_pockets = (self.wider_pockets_checkbox.isChecked(), self.deeper_pockets_checkbox.isChecked())
+        self._mod_storage = has_slot_mod_data(player_data)
+        for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button):
+            control.setEnabled(not self._mod_storage)
+        self.load_equipment(root_save)
+
+    def load_equipment(self, root_save):
+        self.equipment_slots = []
+        while self.equipment_layout.count():
+            widget = self.equipment_layout.takeAt(0).widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        equipment = eaq_equipment(self.player_data, root_save)
+        self.equipment_group.setVisible(self._mod_storage)
+        description = QLabel(
+            "EquipmentAndQuickSlots — saved equipment. Item type, position and equipped state are kept."
+            if equipment else "Additional mod data is preserved; its equipment slots could not be verified."
+        )
+        description.setWordWrap(True)
+        self.equipment_layout.addWidget(description, 0, 0, 1, 8)
+        for column, (name, item) in enumerate(equipment):
+            label = QLabel(name)
+            label.setAlignment(Qt.AlignCenter)
+            self.equipment_layout.addWidget(label, 1, column)
+            slot = InventorySlot(item["grid_x"], item["grid_y"], self)
+            slot.set_item(item)
+            self.equipment_slots.append(slot)
+            self.equipment_layout.addWidget(slot, 2, column)
+            # Unsupported prefab IDs or properties remain visible and untouched.
+            editable = not validate_item(item, inventory_rows=item["grid_y"] + 1)
+            slot.setEnabled(editable)
+            if not editable:
+                if not item.get("prefab"):
+                    slot.name_label.setText(f"Unknown item\nID: {item.get('prefab_hash', '?')}")
+                slot.setToolTip(slot.toolTip() + "\nPreserved read-only: this item cannot be safely edited.")
+            slot.clicked.connect(lambda checked=False, s=slot: self.edit_equipment_item(s))
+            normal_slot = self.slots.get((item["grid_x"], item["grid_y"]))
+            if normal_slot is not None:
+                normal_slot.clear_item()
+                normal_slot.setEnabled(False)
+
+    def edit_equipment_item(self, slot):
+        if slot not in self.equipment_slots or not slot.isEnabled():
+            return
+        player_data = self.player_data
+        original = slot.item_data
+        dialog = ItemEditDialog(original, self, original["grid_y"] + 1)
+        try:
+            # Slot-type checks depend on the mod's runtime definitions. Keep the
+            # identity and residence flags; reuse property editing only.
+            dialog.prefab_input.setEnabled(False)
+            dialog.stack_input.setEnabled(False)
+            dialog.equipped_input.setEnabled(False)
+            baseline = dialog.get_updated_data()
+            if (dialog.exec() == QDialog.Accepted and self.player_data is player_data
+                    and slot in self.equipment_slots and slot.item_data is original):
+                updated = dialog.get_updated_data()
+                for key in ("quality", "durability", "variant", "cheated", "crafter_id", "crafter_name"):
+                    if updated[key] != baseline[key]:
+                        original[key] = updated[key]
+                slot.update_visuals()
+        finally:
+            dialog.deleteLater()
 
     def clear_all_cheated_flags(self):
-        if not self.player_data:
+        if not self.player_data or getattr(self, "_mod_storage", False):
             return
 
         flagged_items = [
@@ -230,6 +313,7 @@ class InventoryTab(QWidget):
 
     def is_current_slot(self, slot):
         return (self.player_data is not None and slot is not None
+                and slot.isEnabled()
                 and self.slots.get((slot.grid_x, slot.grid_y)) is slot)
 
     def on_slot_clicked(self, slot: InventorySlot):
@@ -402,6 +486,10 @@ class InventoryTab(QWidget):
     def save_changes(self):
         if not self.player_data:
             return
+        if (getattr(self, "_mod_storage", False)
+                or (self.wider_pockets_checkbox.isChecked(), self.deeper_pockets_checkbox.isChecked())
+                == getattr(self, "_loaded_pockets", None)):
+            return
 
         uniques = self.player_data.get(
             "uniques",
@@ -441,3 +529,4 @@ class InventoryTab(QWidget):
                 )
 
         self.player_data["uniques"] = uniques
+        self._loaded_pockets = (self.wider_pockets_checkbox.isChecked(), self.deeper_pockets_checkbox.isChecked())
