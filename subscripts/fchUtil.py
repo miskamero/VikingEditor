@@ -135,7 +135,7 @@ class BinaryWriter:
         self.stream.write(data)
 
 
-# current valheim v46 format
+# Valheim v46/v47 share the serialized PlayerProfile layout.
 
 def read_string_float_dictionary(pkg: BinaryReader) -> dict:
     count = pkg.read_int32()
@@ -221,7 +221,7 @@ def decompile_fch(fch_path: str) -> dict:
     #
     # Current Valheim:
     #
-    # version = 46
+    # version = 46 or 47
     # stat count = 205
     # profile count = 10
 
@@ -234,9 +234,9 @@ def decompile_fch(fch_path: str) -> dict:
     save_data["stat_count"] = stat_count
     save_data["profile_count"] = profile_count
 
-    if version != 46:
+    if version not in (46, 47):
         print(
-            f"Warning: This parser targets Valheim Version 46. "
+            f"Warning: This parser targets Valheim Versions 46 and 47. "
             f"Attempting to parse Version {version} anyway..."
         )
 
@@ -259,7 +259,7 @@ def decompile_fch(fch_path: str) -> dict:
 
         known_commands = read_string_float_dictionary(pkg)
 
-        # Klinoff thinks that the current version of Valheim writes 5 enemy-stat groups.
+        # v46/v47 store method dictionaries in KillModifiers order, total first.
         enemy_group_count = pkg.read_int32()
 
         if enemy_group_count < 0:
@@ -373,8 +373,11 @@ def compile_fch(json_path: str, fch_path: str):
 
     pkg = BinaryWriter()
 
-    # Version
-    pkg.write_int32(46)
+    # Preserve existing saves' version; legacy JSON without a version used v46.
+    version = save_data.get("version", 46)
+    if version not in (46, 47):
+        raise ValueError(f"Unsupported save version for writing: {version}")
+    pkg.write_int32(version)
 
     # Player stat dimensions
     stat_count = save_data.get("stat_count", 205)

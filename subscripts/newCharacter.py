@@ -5,7 +5,7 @@ import time
 from subscripts.playerDataUtil import pack_player_data_hex
 
 
-CURRENT_SAVE_VERSION = 46
+CURRENT_SAVE_VERSION = 47
 CURRENT_STAT_COUNT = 205
 CURRENT_PROFILE_COUNT = 10
 
@@ -68,6 +68,8 @@ def create_empty_player_data():
     """
 
     return {
+        "version": 34,
+        "inventory_version": 110,
         "max_health": 25.0,
         "health": 25.0,
         "max_stamina": 50.0,
@@ -116,6 +118,8 @@ def create_empty_player_data():
         "eitr": 0.0,
 
         "build_ui_data_hex": "",
+        "pseudo_drop_counters": {},
+        "item_upgrade_seeds": {},
     }
 
 

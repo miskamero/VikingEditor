@@ -60,7 +60,7 @@ print()
 print("=== CHECKS ===")
 
 assert loaded_data["character_name"] == "Test Viking"
-assert loaded_data["version"] == 46
+assert loaded_data["version"] == 47
 assert loaded_data["profile_count"] == 10
 assert loaded_data["stat_count"] == 205
 assert loaded_data["player_id"] == save_data["player_id"]

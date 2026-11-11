@@ -1,3 +1,5 @@
+import math
+
 from PySide6.QtCore import Qt
 from ui.tabStyle import detail_layout, polish_table
 
@@ -22,7 +24,7 @@ class StatisticsTab(QWidget):
         self.root_save = None
 
         layout = detail_layout(
-            self, "Statistics", "Explore lifetime activity, combined across all saved profiles."
+            self, "Statistics", "Explore your character's lifetime activity."
         )
         self.table_controls = {}
 
@@ -112,82 +114,45 @@ class StatisticsTab(QWidget):
 
         self.clear_tables()
 
-        if not self.root_save:
+        if not isinstance(self.root_save, dict):
             return
 
         profiles = self.root_save.get("profiles", [])
 
-        if not profiles:
+        if not isinstance(profiles, list) or not profiles:
             return
 
-        # Combine statistics from all profiles.
-        enemy_stats = {}
-        pickup_stats = {}
-        crafted_stats = {}
-        pickable_stats = {}
-        pieces_stats = {}
+        # fchUtil preserves serialized order in v46/v47: RawStats = 0, Any = 1.
+        # Raw contains lifetime totals; other profiles overlap with it.
+        raw = profiles[0]
+        if not isinstance(raw, dict):
+            return
 
-        for profile in profiles:
-            # Enemy statistics are stored as a list of dictionaries.
-            for enemy_dict in profile.get("enemy_stats", []):
-                for name, count in enemy_dict.items():
-                    enemy_stats[name] = (
-                        enemy_stats.get(name, 0) + count
-                    )
-
-            # Other statistics are dictionaries.
-            for name, count in profile.get(
-                "item_pickup_stats", {}
-            ).items():
-                pickup_stats[name] = (
-                    pickup_stats.get(name, 0) + count
-                )
-
-            for name, count in profile.get(
-                "item_craft_stats", {}
-            ).items():
-                crafted_stats[name] = (
-                    crafted_stats.get(name, 0) + count
-                )
-
-            for name, count in profile.get(
-                "pickable_stats", {}
-            ).items():
-                pickable_stats[name] = (
-                    pickable_stats.get(name, 0) + count
-                )
-
-            for name, count in profile.get(
-                "pieces_placed_stats", {}
-            ).items():
-                pieces_stats[name] = (
-                    pieces_stats.get(name, 0) + count
-                )
-
-        self.populate_table(
-            self.enemies_table,
-            enemy_stats
+        # enemy_stats is a list of method dictionaries, not enemy records.
+        # KillModifiers.MixedAndTotal = 0 already includes the other methods.
+        enemy_slots = raw.get("enemy_stats", [])
+        enemy_stats = (
+            enemy_slots[0]
+            if isinstance(enemy_slots, list) and enemy_slots
+            else {}
         )
 
-        self.populate_table(
-            self.pickups_table,
-            pickup_stats
-        )
-
-        self.populate_table(
-            self.crafted_table,
-            crafted_stats
-        )
-
-        self.populate_table(
-            self.pickables_table,
-            pickable_stats
-        )
-
-        self.populate_table(
-            self.pieces_table,
-            pieces_stats
-        )
+        for table, data in (
+            (self.enemies_table, enemy_stats),
+            (self.pickups_table, raw.get("item_pickup_stats", {})),
+            (self.crafted_table, raw.get("item_craft_stats", {})),
+            (self.pickables_table, raw.get("pickable_stats", {})),
+            (self.pieces_table, raw.get("pieces_placed_stats", {})),
+        ):
+            # Missing or malformed statistics display as empty, without using Any.
+            valid_data = {
+                name: count for name, count in data.items()
+                if isinstance(name, str)
+                and isinstance(count, (int, float))
+                and not isinstance(count, bool)
+                and math.isfinite(count)
+            } if isinstance(data, dict) else {}
+            self.populate_table(table, valid_data)
 
     def get_first_populated(self, dictionaries):
         for data in dictionaries:

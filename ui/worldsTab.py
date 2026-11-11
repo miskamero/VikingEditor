@@ -1,3 +1,5 @@
+import math
+
 from PySide6.QtCore import Qt
 from ui.tabStyle import detail_layout, polish_forms
 from PySide6.QtWidgets import (
@@ -256,26 +258,19 @@ class WorldsTab(QWidget):
             []
         )
 
-        # known_worlds lives inside profiles.
-        #
-        # There can be multiple profiles, so aggregate the times
-
-        profiles = self.root_save.get(
-            "profiles",
-            []
-        )
-
-        for profile in profiles:
-            for world_name, seconds in profile.get(
-                "known_worlds",
-                {}
-            ).items():
-                self.known_worlds[world_name] = (
-                    self.known_worlds.get(
-                        world_name,
-                        0
-                    ) + seconds
-                )
+        # RawStats = 0 contains total play time in v46/v47; difficulty profiles
+        # record the same time again. Missing Raw data must not use those totals.
+        profiles = self.root_save.get("profiles", [])
+        raw = profiles[0] if isinstance(profiles, list) and profiles else {}
+        known_worlds = raw.get("known_worlds", {}) if isinstance(raw, dict) else {}
+        if isinstance(known_worlds, dict):
+            self.known_worlds = {
+                name: seconds for name, seconds in known_worlds.items()
+                if isinstance(name, str)
+                and isinstance(seconds, (int, float))
+                and not isinstance(seconds, bool)
+                and math.isfinite(seconds)
+            }
 
         for world_name in self.known_worlds:
             item = QListWidgetItem(

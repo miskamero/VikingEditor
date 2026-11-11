@@ -1,8 +1,14 @@
+from contextlib import redirect_stdout
 from copy import deepcopy
+import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from tests.support import ITEMS, item, create_empty_player_data, create_new_character
+from subscripts.fchUtil import compile_fch, decompile_fch
 from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtTest import QTest
@@ -249,16 +255,158 @@ class ProgressTests(QtTestCase):
 
 
 class StatisticsTests(QtTestCase):
-    def test_aggregates_profiles_and_filters(self):
-        self.root["profiles"][0]["enemy_stats"] = [{"Troll": 2}, {"Troll": 3}]
-        self.root["profiles"][1]["enemy_stats"] = [{"Troll": 4, "Boar": 1}]
+    STATISTICS = (
+        ("enemy_stats", "enemies_table", "enemies_total"),
+        ("item_pickup_stats", "pickups_table", "pickups_total"),
+        ("item_craft_stats", "crafted_table", "crafted_total"),
+        ("pickable_stats", "pickables_table", "pickables_total"),
+        ("pieces_placed_stats", "pieces_table", "pieces_total"),
+    )
+
+    def test_raw_totals_ignore_overlapping_profiles_and_preserve_data(self):
+        for key, _, _ in self.STATISTICS:
+            for profile in self.root["profiles"]:
+                counts = {"Wood": 12.0, "Stone": 3.0}
+                profile[key] = [counts] if key == "enemy_stats" else counts
+        original = deepcopy(self.root)
+        player_data = deepcopy(self.data)
         tab = self.widget(StatisticsTab)
         tab.load_data(self.data, self.root)
-        self.assertEqual(tab.enemies_total.text(), "Total: 10")
-        self.assertEqual(tab.enemies_table.item(0, 1).text(), "9")
+        for key, table_name, total_name in self.STATISTICS:
+            with self.subTest(statistic=key):
+                table = getattr(tab, table_name)
+                self.assertEqual(getattr(tab, total_name).text(), "Total: 15")
+                self.assertEqual(table.rowCount(), 2)
+                self.assertEqual(table.item(0, 1).text(), "12")
+                self.assertEqual(table.item(1, 1).text(), "3")
+        self.assertEqual(self.root, original)
+        self.assertEqual(self.data, player_data)
+
+    def test_enemy_total_ignores_kill_methods_and_filters(self):
+        self.root["profiles"][0]["enemy_stats"] = [
+            {"Troll": 10, "Boar": 1},
+            {"Troll": 1}, {"Troll": 2}, {"Troll": 3}, {"Troll": 4},
+        ]
+        tab = self.widget(StatisticsTab)
+        tab.load_data(self.data, self.root)
+        self.assertEqual(tab.enemies_total.text(), "Total: 11")
+        self.assertEqual(tab.enemies_table.item(0, 1).text(), "10")
         tab.enemies_search.setText("boar")
         self.assertTrue(tab.enemies_table.isRowHidden(0))
         self.assertFalse(tab.enemies_table.isRowHidden(1))
+        self.assertEqual(tab.enemies_total.text(), "Total: 11")
+
+    def test_serialized_statistics_totals_in_versions_46_and_47(self):
+        # The installed game's LoadPlayerFromDisk uses the same profile and
+        # method dictionary layout for v46 and v47. Exercise the parser too.
+        for profile in self.root["profiles"]:
+            profile["enemy_stats"] = [
+                {"Troll": 10, "Boar": 1},
+                {"Troll": 1}, {"Troll": 2}, {"Troll": 3}, {"Troll": 4},
+            ]
+            for count, (key, _, _) in enumerate(self.STATISTICS[1:], start=2):
+                profile[key] = {"Wood": float(count)}
+            profile["known_worlds"] = {"Midgard": 3600.0}
+            # These are serialized but are not displayed in the Statistics tab.
+            profile["food_eaten_stats"] = {"Bread": 7.0}
+            profile["stats"][0] = 9.0
+        tab = self.widget(StatisticsTab)
+        worlds_tab = self.widget(WorldsTab)
+        for version in (46, 47):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                self.root["version"] = version
+                source = Path(directory) / "source.json"
+                target = Path(directory) / "character.fch"
+                source.write_text(json.dumps(self.root), encoding="utf-8")
+                with redirect_stdout(io.StringIO()):
+                    compile_fch(str(source), str(target))
+                    loaded = decompile_fch(str(target))
+                self.assertEqual(loaded, self.root)
+                original = deepcopy(loaded)
+                tab.load_data(self.data, loaded)
+                worlds_tab.load_data(loaded)
+                self.assertEqual(tab.enemies_total.text(), "Total: 11")
+                self.assertEqual(tab.enemies_table.item(0, 1).text(), "10")
+                for count, (_, table_name, total_name) in enumerate(self.STATISTICS[1:], start=2):
+                    self.assertEqual(getattr(tab, total_name).text(), f"Total: {count}")
+                    self.assertEqual(getattr(tab, table_name).rowCount(), 1)
+                self.assertEqual(worlds_tab.time_played_label.text(), "Time Played: 1h")
+                self.assertEqual(loaded, original)
+
+    def test_raw_is_authoritative_when_any_differs(self):
+        tab = self.widget(StatisticsTab)
+        for raw_count, any_count in ((12, 3), (12, 0), (0, 12)):
+            with self.subTest(raw=raw_count, any=any_count):
+                for key, _, _ in self.STATISTICS:
+                    raw = {"Wood": raw_count}
+                    any_stats = {"Wood": any_count, "OnlyInAny": 99}
+                    self.root["profiles"][0][key] = [raw] if key == "enemy_stats" else raw
+                    self.root["profiles"][1][key] = [any_stats] if key == "enemy_stats" else any_stats
+                tab.load_data(self.data, self.root)
+                for _, table_name, total_name in self.STATISTICS:
+                    self.assertEqual(getattr(tab, total_name).text(), f"Total: {raw_count}")
+                    self.assertEqual(getattr(tab, table_name).rowCount(), 1)
+
+    def test_missing_or_malformed_profiles_clear_previous_statistics(self):
+        tab = self.widget(StatisticsTab)
+        self.root["profiles"][0]["item_pickup_stats"] = {"Wood": 12}
+        invalid_saves = (
+            None, [], {}, {"profiles": None}, {"profiles": []},
+            {"profiles": "invalid"}, {"profiles": {0: {}}},
+            {"profiles": [None, self.root["profiles"][0]]},
+            {"profiles": [[], self.root["profiles"][0]]},
+        )
+        for root in invalid_saves:
+            with self.subTest(root=root):
+                tab.load_data(self.data, self.root)
+                tab.pickups_search.setText("wood")
+                tab.load_data(self.data, root)
+                for table, (search, total, status) in tab.table_controls.items():
+                    self.assertEqual(table.rowCount(), 0)
+                    self.assertEqual(search.text(), "")
+                    self.assertEqual(total.text(), "Total: 0")
+                    self.assertEqual(status.text(), "No activity recorded.")
+
+    def test_missing_or_malformed_raw_statistics_do_not_fall_back_to_any(self):
+        tab = self.widget(StatisticsTab)
+        for key, table_name, total_name in self.STATISTICS:
+            for value in (None, [], "invalid", 42):
+                with self.subTest(statistic=key, value=value):
+                    raw = {} if value is None else {key: value}
+                    valid = {"Wood": 12}
+                    any_stats = {key: [valid] if key == "enemy_stats" else valid}
+                    tab.load_data(self.data, {"profiles": [raw, any_stats]})
+                    self.assertEqual(getattr(tab, table_name).rowCount(), 0)
+                    self.assertEqual(getattr(tab, total_name).text(), "Total: 0")
+            tab.load_data(self.data, {"profiles": [{key: None}]})
+            self.assertEqual(getattr(tab, table_name).rowCount(), 0)
+
+    def test_missing_or_malformed_enemy_total_does_not_use_method_slots(self):
+        tab = self.widget(StatisticsTab)
+        for total in ({}, None, [], "invalid"):
+            with self.subTest(total=total):
+                self.root["profiles"][0]["enemy_stats"] = [total, {"Troll": 12}]
+                tab.load_data(self.data, self.root)
+                self.assertEqual(tab.enemies_table.rowCount(), 0)
+                self.assertEqual(tab.enemies_total.text(), "Total: 0")
+
+    def test_invalid_entries_are_ignored_without_hiding_valid_counts(self):
+        counts = {
+            "Wood": 12.0, "Stone": 0.5, "Text": "3", "Missing": None,
+            "Flag": True, "List": [], "NaN": float("nan"),
+            "Infinity": float("inf"), "NegativeInfinity": float("-inf"), 42: 7,
+        }
+        for key, _, _ in self.STATISTICS:
+            self.root["profiles"][0][key] = [counts] if key == "enemy_stats" else counts
+        tab = self.widget(StatisticsTab)
+        tab.load_data(self.data, self.root)
+        for key, table_name, total_name in self.STATISTICS:
+            with self.subTest(statistic=key):
+                table = getattr(tab, table_name)
+                self.assertEqual(getattr(tab, total_name).text(), "Total: 12.5")
+                self.assertEqual(table.rowCount(), 2)
+                self.assertEqual(table.item(0, 0).text(), "Wood")
+                self.assertEqual(table.item(1, 1).text(), "0.5")
 
     def test_empty_reload_resets_totals(self):
         self.root["profiles"][0]["item_pickup_stats"] = {"Wood": 12}
@@ -288,15 +436,44 @@ class CharacterTests(QtTestCase):
 
 
 class WorldsTests(QtTestCase):
-    def test_world_times_aggregate_and_search(self):
+    def test_world_times_use_raw_and_search(self):
         self.root["profiles"][0]["known_worlds"] = {"Midgard": 3600}
-        self.root["profiles"][1]["known_worlds"] = {"Midgard": 65}
+        self.root["profiles"][1]["known_worlds"] = {"Midgard": 3600, "OnlyInAny": 99}
+        self.root["profiles"][6]["known_worlds"] = {"Midgard": 65}
+        original = deepcopy(self.root)
         tab = self.widget(WorldsTab)
         tab.load_data(self.root)
         self.assertEqual(tab.world_list.count(), 1)
-        self.assertIn("1h 1m 5s", tab.time_played_label.text())
+        self.assertEqual(tab.time_played_label.text(), "Time Played: 1h")
         tab.world_search.setText("missing")
         self.assertTrue(tab.world_list.item(0).isHidden())
+        self.assertEqual(self.root, original)
+
+    def test_missing_raw_world_times_preserve_world_record_fallback(self):
+        tab = self.widget(WorldsTab)
+        self.root["worlds"] = [dict(world_id=42)]
+        for raw in ({}, None, [], {"known_worlds": {}}, {"known_worlds": None},
+                    {"known_worlds": []}, {"known_worlds": "invalid"}):
+            with self.subTest(raw=raw):
+                self.root["profiles"] = [raw, {"known_worlds": {"Midgard": 3600}}]
+                tab.load_data(self.root)
+                self.assertEqual(tab.known_worlds, {})
+                self.assertEqual(tab.world_list.count(), 1)
+                self.assertEqual(tab.world_list.item(0).text(), "World 1")
+                self.assertEqual(tab.time_played_label.text(), "Time Played: Unknown")
+                self.assertEqual(tab.world_id_label.text(), "42")
+
+    def test_zero_and_invalid_raw_world_times_do_not_use_other_profiles(self):
+        tab = self.widget(WorldsTab)
+        self.root["profiles"][0]["known_worlds"] = {
+            "Midgard": 0, "Text": "3", "Missing": None, "Flag": True,
+            "NaN": float("nan"), "Infinity": float("inf"), 42: 7,
+        }
+        self.root["profiles"][1]["known_worlds"] = {"Midgard": 3600}
+        tab.load_data(self.root)
+        self.assertEqual(tab.known_worlds, {"Midgard": 0})
+        self.assertEqual(tab.world_list.count(), 1)
+        self.assertEqual(tab.time_played_label.text(), "Time Played: 0s")
 
     def test_fallback_records_and_empty_copy_states(self):
         self.root["worlds"] = [dict(world_id=42, have_custom_spawn=True, spawn_point=[1, 2, 3])]

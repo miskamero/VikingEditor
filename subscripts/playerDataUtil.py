@@ -253,14 +253,20 @@ def read_string_string_dictionary(pkg: PlayerDataReader) -> dict:
     }
 
 
+def read_int_int_dictionary(pkg: PlayerDataReader) -> dict:
+    count = pkg.read_int32()
+    if count < 0:
+        raise ValueError(f"Invalid dictionary count: {count}")
+    return {pkg.read_int32(): pkg.read_int32() for _ in range(count)}
+
+
 # Player.Save / Player.Load
 
 def unpack_player_data_hex(hex_string: str) -> dict:
     """
     parses the nested Player.Save payload from a hex string into a Python dictionary.
 
-    current Valheim player data version: 33
-    current inventory version: 109
+    Supports player versions 33/34 and inventory versions 109/110.
     """
 
     if not hex_string:
@@ -275,6 +281,8 @@ def unpack_player_data_hex(hex_string: str) -> dict:
     # player core stats
 
     out["version"] = pkg.read_int32()
+    if out["version"] not in (33, 34):
+        raise ValueError(f"Unsupported player data version: {out['version']}")
 
     out["max_health"] = pkg.read_float()
     out["health"] = pkg.read_float()
@@ -289,11 +297,13 @@ def unpack_player_data_hex(hex_string: str) -> dict:
     #
     # Inventory.Save:
     #
-    # int version = 109
+    # int version = 109 or 110 (same item layout)
     # ushort item count
     # ItemData.Save()... klinoff knows this one
 
     out["inventory_version"] = pkg.read_int32()
+    if out["inventory_version"] not in (109, 110):
+        raise ValueError(f"Unsupported inventory version: {out['inventory_version']}")
 
     item_count = pkg.read_ushort()
 
@@ -384,6 +394,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
         # current item format always has now a extra cheated byte.
         cheated_flags = pkg.read_byte()
+        item["cheated_flags"] = cheated_flags
 
         item["cheated"] = bool(
             cheated_flags & 1
@@ -478,23 +489,44 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
     out["build_ui_data_hex"] = build_ui_data.hex()
 
+    # Player.Save appends these in v34, in this order. Player.Load skips both
+    # for v33. Keep the signed keys/values, including seeds we cannot interpret.
+    if out["version"] >= 34:
+        out["pseudo_drop_counters"] = read_int_int_dictionary(pkg)
+        out["item_upgrade_seeds"] = read_int_int_dictionary(pkg)
+
+    # Retain opaque extensions to supported layouts instead of dropping bytes.
+    trailing_data = pkg.stream.read()
+    if trailing_data:
+        out["trailing_data_hex"] = trailing_data.hex()
+
     return out
 
 def pack_player_data_hex(data: dict) -> str:
     """
-    Serializes the current Valheim 1.0 Player.Save payload.
+    Serializes supported Player.Save payloads, preserving their versions.
 
     Current format:
-        Player version: 33
-        Inventory version: 109
+        Player version: 33 or 34
+        Inventory version: 109 or 110
         Inventory count: ushort
         Item format: compact flags + optional fields
     """
 
+    # Missing versions retain the historical defaults for imported editor JSON.
+    version = data.get("version", 33)
+    inventory_version = data.get("inventory_version", 109)
+    if version not in (33, 34):
+        raise ValueError(f"Unsupported player data version: {version}")
+    if inventory_version not in (109, 110):
+        raise ValueError(f"Unsupported inventory version: {inventory_version}")
+    if version == 33 and (data.get("pseudo_drop_counters") or data.get("item_upgrade_seeds")):
+        raise ValueError("Player version 33 cannot store version 34 counters or upgrade seeds")
+
     pkg = PlayerDataWriter()
 
     # Player version
-    pkg.write_int32(33)
+    pkg.write_int32(version)
 
     # Core stats
     pkg.write_float(
@@ -522,7 +554,7 @@ def pack_player_data_hex(data: dict) -> str:
     )
 
     # Inventory
-    pkg.write_int32(109)
+    pkg.write_int32(inventory_version)
 
     inventory = data.get("inventory", [])
 
@@ -652,8 +684,10 @@ def pack_player_data_hex(data: dict) -> str:
                 pkg.write_string(k)
                 pkg.write_string(v)
 
-        # Cheated flag
-        cheated_flags = 0
+        # Preserve uninterpreted bits while allowing the existing checkbox to
+        # edit bit 0. Current ItemData.Load honors this bit only in v110;
+        # retaining v109 avoids changing the meaning of legacy item flags.
+        cheated_flags = item.get("cheated_flags", 0) & ~1
 
         if item.get("cheated", False):
             cheated_flags |= 1
@@ -856,5 +890,16 @@ def pack_player_data_hex(data: dict) -> str:
     pkg.write_byte_array(
         build_ui_data
     )
+
+    if version >= 34:
+        for field in ("pseudo_drop_counters", "item_upgrade_seeds"):
+            values = data.get(field, {})
+            pkg.write_int32(len(values))
+            for key, value in values.items():
+                # JSON object keys become strings on export/import.
+                pkg.write_int32(int(key))
+                pkg.write_int32(value)
+
+    pkg.stream.write(bytes.fromhex(data.get("trailing_data_hex", "")))
 
     return pkg.get_bytes().hex()

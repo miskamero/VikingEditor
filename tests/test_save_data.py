@@ -69,7 +69,10 @@ class PlayerDataTests(unittest.TestCase):
         self.assertEqual(data["inventory"], [])
         self.assertEqual(data["health"], 25)
         self.assertEqual(data["skills"], [])
-        self.assertEqual(data["inventory_version"], 109)
+        self.assertEqual(data["version"], 34)
+        self.assertEqual(data["inventory_version"], 110)
+        self.assertEqual(data["pseudo_drop_counters"], {})
+        self.assertEqual(data["item_upgrade_seeds"], {})
 
     def test_item_metadata_and_both_cheated_states(self):
         data = create_empty_player_data()
@@ -116,6 +119,7 @@ class CharacterFileTests(unittest.TestCase):
 
     def test_character_file_round_trip_and_checksum(self):
         original = create_new_character("Åsa")
+        self.assertEqual(original["version"], 47)
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             source = Path(directory) / "source.json"
             target = Path(directory) / "character.fch"
@@ -129,6 +133,44 @@ class CharacterFileTests(unittest.TestCase):
                     "profile_count", "stat_count", "used_cheats", "player_data_hex"):
             with self.subTest(key=key):
                 self.assertEqual(loaded[key], original[key])
+
+    def test_writer_preserves_versions_and_only_changes_version_header(self):
+        original = create_new_character("Test Viking")
+        payloads = []
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            source = Path(directory) / "source.json"
+            target = Path(directory) / "character.fch"
+            for version in (46, 47, None):
+                with self.subTest(version=version):
+                    if version is None:
+                        original.pop("version")  # Legacy JSON default remains v46.
+                    else:
+                        original["version"] = version
+                    source.write_text(json.dumps(original), encoding="utf-8")
+                    compile_fch(str(source), str(target))
+                    reader = BinaryReader(target.read_bytes())
+                    payload = reader.read_byte_array()
+                    self.assertEqual(reader.read_byte_array(), hashlib.sha512(payload).digest())
+                    self.assertEqual(struct.unpack_from("<i", payload)[0], version or 46)
+                    loaded = decompile_fch(str(target))
+                    self.assertEqual(loaded, dict(original, version=version or 46))
+                    payloads.append(payload[4:])
+        self.assertEqual(payloads[0], payloads[1])
+        self.assertEqual(payloads[0], payloads[2])
+
+    def test_writer_rejects_unsupported_version_without_overwriting_save(self):
+        original = create_new_character("Test Viking")
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            source = Path(directory) / "source.json"
+            target = Path(directory) / "character.fch"
+            target.write_bytes(b"existing save")
+            for version in (43, 48):
+                with self.subTest(version=version):
+                    original["version"] = version
+                    source.write_text(json.dumps(original), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "Unsupported save version"):
+                        compile_fch(str(source), str(target))
+                    self.assertEqual(target.read_bytes(), b"existing save")
 
     def test_truncated_character_file_rejected(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
