@@ -21,7 +21,7 @@ from PySide6.QtCore import Qt
 
 from ui.inventorySlot import InventorySlot
 from ui.itemEditDialog import ItemEditDialog
-from subscripts.equipmentSlots import eaq_equipment, has_slot_mod_data
+from subscripts.equipmentSlots import eaq_equipment, eaq_inventory_rows, has_slot_mod_data
 from subscripts.itemValidation import validate_item
 
 class InventoryTab(QWidget):
@@ -31,6 +31,7 @@ class InventoryTab(QWidget):
     def __init__(self):
         super().__init__()
         self.player_data = None
+        self._eaq_rows = None
         
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,11 +97,12 @@ class InventoryTab(QWidget):
 
     def get_inventory_rows(self):
         if self.deeper_pockets_checkbox.isChecked():
-            return 6
+            rows = 6
         elif self.wider_pockets_checkbox.isChecked():
-            return 5
+            rows = 5
         else:
-            return 4
+            rows = 4
+        return min(rows, self._eaq_rows) if self._eaq_rows is not None else rows
 
     def handle_wider_pockets(self, state):
         if not state and self.deeper_pockets_checkbox.isChecked():
@@ -128,6 +130,10 @@ class InventoryTab(QWidget):
         self.init_empty_grid(rows)
 
     def init_empty_grid(self, rows=4):
+        # Never expose EAQ's quick/equipment/custom region as ordinary cells,
+        # even if vanilla row markers disagree with the saved mod layout.
+        if self._eaq_rows is not None:
+            rows = min(rows, self._eaq_rows)
         inventory_items = []
 
         if self.player_data:
@@ -184,6 +190,7 @@ class InventoryTab(QWidget):
 
     def load_data(self, player_data, root_save=None):
         self.player_data = player_data
+        self._eaq_rows = eaq_inventory_rows(player_data)
         self.clear_cheated_button.setEnabled(True)
 
         uniques = player_data.get(
@@ -214,6 +221,12 @@ class InventoryTab(QWidget):
         self._mod_storage = has_slot_mod_data(player_data)
         for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button):
             control.setEnabled(not self._mod_storage)
+        for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox):
+            control.setToolTip("Inventory dimensions are preserved while slot-mod data is present." if self._mod_storage else "")
+        self.clear_cheated_button.setToolTip(
+            "Bulk changes are disabled to preserve slot-mod items. Edit recognized items individually."
+            if self._mod_storage else "Remove the 'spawned in with cheats' flag from every inventory item."
+        )
         self.load_equipment(root_save)
 
     def load_equipment(self, root_save):
@@ -224,15 +237,16 @@ class InventoryTab(QWidget):
                 widget.hide()
                 widget.deleteLater()
         equipment = eaq_equipment(self.player_data, root_save)
-        self.equipment_group.setVisible(self._mod_storage)
+        self.equipment_group.setVisible(bool(equipment))
+        if not equipment:
+            return
         description = QLabel(
             "EquipmentAndQuickSlots — saved equipment. Item type, position and equipped state are kept."
-            if equipment else "Additional mod data is preserved; its equipment slots could not be verified."
         )
         description.setWordWrap(True)
         self.equipment_layout.addWidget(description, 0, 0, 1, 8)
         for column, (name, item) in enumerate(equipment):
-            label = QLabel(name)
+            label = QLabel({"Helmet": "Head", "Shoulder": "Back", "Utility2": "Utility 2", "Utility3": "Utility 3"}.get(name, name))
             label.setAlignment(Qt.AlignCenter)
             self.equipment_layout.addWidget(label, 1, column)
             slot = InventorySlot(item["grid_x"], item["grid_y"], self)
@@ -266,7 +280,8 @@ class InventoryTab(QWidget):
             dialog.equipped_input.setEnabled(False)
             baseline = dialog.get_updated_data()
             if (dialog.exec() == QDialog.Accepted and self.player_data is player_data
-                    and slot in self.equipment_slots and slot.item_data is original):
+                    and slot in self.equipment_slots and slot.item_data is original
+                    and any(item is original for item in player_data["inventory"])):
                 updated = dialog.get_updated_data()
                 for key in ("quality", "durability", "variant", "cheated", "crafter_id", "crafter_name"):
                     if updated[key] != baseline[key]:
@@ -377,20 +392,26 @@ class InventoryTab(QWidget):
             dialog.deleteLater()
 
     def remove_slot_item(self, slot: InventorySlot):
+        if not self.is_current_slot(slot) or not slot.item_data:
+            return
+        player_data, original = self.player_data, slot.item_data
         confirm = QMessageBox.question(
             self, "Confirm Delete", 
             f"Are you sure you want to delete the item in slot ({slot.grid_x}, {slot.grid_y})?",
             QMessageBox.Yes | QMessageBox.No
         )
-        if confirm == QMessageBox.Yes:
-            if slot.item_data in self.player_data["inventory"]:
-                self.player_data["inventory"].remove(slot.item_data)
+        if (confirm == QMessageBox.Yes and self.player_data is player_data
+                and self.is_current_slot(slot) and slot.item_data is original):
+            for index, item in enumerate(player_data["inventory"]):
+                if item is original:
+                    del player_data["inventory"][index]
+                    break
             slot.clear_item()
 
     def copy_slot_item(self, slot: InventorySlot):
         """Copy an inventory item to the system clipboard."""
 
-        if not slot.item_data:
+        if not self.is_current_slot(slot) or not slot.item_data:
             return
 
         clipboard_data = {
@@ -407,6 +428,9 @@ class InventoryTab(QWidget):
 
     def paste_slot_item(self, slot: InventorySlot):
         """Paste an inventory item from the system clipboard."""
+
+        if not self.is_current_slot(slot) or slot.item_data:
+            return
 
         clipboard_text = QApplication.clipboard().text()
 

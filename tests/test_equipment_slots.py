@@ -13,11 +13,12 @@ from unittest.mock import patch
 
 from tests.support import item, create_empty_player_data, create_new_character, playerDataUtil as player
 from tests.test_editor import QtTestCase
-from subscripts.equipmentSlots import EAQ_EQUIPMENT, eaq_equipment
+from subscripts.equipmentSlots import EAQ_EQUIPMENT, eaq_equipment, eaq_inventory_rows, has_slot_mod_data
 from subscripts.fchUtil import BinaryReader, compile_fch, decompile_fch
+from subscripts.itemDatabase import get_stable_hash_code
 from ui.inventoryTab import InventoryTab
 from ui.itemEditDialog import ItemEditDialog
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 
 def backup(rows=4, width=8, version=1):
@@ -41,7 +42,7 @@ def equipment_fixture(rows=4):
 
 class EquipmentRecognitionTests(unittest.TestCase):
     def test_all_equipment_indices_and_extra_rows(self):
-        for rows in (4, 6, 9):
+        for rows in (1, 2, 3, 4, 6, 9):
             data, root = equipment_fixture(rows)
             template = data["inventory"][1]
             data["inventory"] = []
@@ -68,6 +69,42 @@ class EquipmentRecognitionTests(unittest.TestCase):
         data["inventory"].append(deepcopy(data["inventory"][1]))
         self.assertEqual(eaq_equipment(data, root), [])
         self.assertEqual(eaq_equipment(data, None), [])
+
+    def test_parked_equipment_does_not_require_equipped_flag(self):
+        data, root = equipment_fixture()
+        data["inventory"][1]["equipped"] = False
+        data["inventory"][1]["custom_data"]["eaqs_parked"] = "Helmet"
+        before = deepcopy(data)
+        self.assertEqual(eaq_equipment(data, root), [("Helmet", data["inventory"][1])])
+        self.assertEqual(data, before)
+
+    def test_backup_is_required_and_payload_stays_opaque(self):
+        # EAQ BackupEnabled=false is legitimate, but gives no independent width
+        # evidence. Do not guess a layout from item return-slot memory alone.
+        data, root = equipment_fixture()
+        del data["custom_data"]["eaqs_backup"]
+        self.assertIsNone(eaq_inventory_rows(data))
+        self.assertEqual(eaq_equipment(data, root), [])
+        wire = base64.b64decode(backup())
+        for payload in (wire[:-1], wire + b"trailing"):
+            data["custom_data"]["eaqs_backup"] = base64.b64encode(payload).decode("ascii")
+            before = deepcopy(data)
+            self.assertIsNone(eaq_inventory_rows(data))
+            self.assertEqual(data, before)
+
+    def test_slot_memory_is_not_layout_evidence_or_proof_of_an_inactive_mod(self):
+        for key in ("eaqs_slot", "ExtraSlotsEquippedSlot"):
+            data = create_empty_player_data()
+            data["inventory"] = [item(grid_y=1, custom_data={key: "Helmet"})]
+            self.assertTrue(has_slot_mod_data(data))
+            self.assertIsNone(eaq_inventory_rows(data))
+            self.assertEqual(eaq_equipment(data, create_new_character("Test")), [])
+
+    def test_invalid_item_metadata_does_not_break_recognition(self):
+        data, root = equipment_fixture()
+        data["inventory"][0]["custom_data"] = None
+        self.assertEqual(len(eaq_equipment(data, root)), 1)
+        self.assertEqual(eaq_equipment(data, {"player_id": True}), [])
 
     def test_missing_malformed_and_conflicting_layouts_are_preserved(self):
         for change in ({"eaqs_backup": "not base64"}, {"eaqs_backup": "AAAAAA=="},
@@ -129,6 +166,98 @@ class EquipmentUITests(QtTestCase):
         self.data, self.root = equipment_fixture(7)
         self.tab = self.widget(InventoryTab)
         self.tab.load_data(self.data, self.root)
+
+    def test_unrecognized_and_historical_data_do_not_show_empty_panel(self):
+        for custom in ({}, {"ExtraSlotsDeferredInventory": "opaque"}, {"eaqs_backup": "malformed"}):
+            data = create_empty_player_data()
+            data["custom_data"] = custom
+            self.tab.load_data(data)
+            self.assertTrue(self.tab.equipment_group.isHidden())
+            self.assertEqual(self.tab.equipment_layout.count(), 0)
+            self.assertEqual(len(self.tab.slots), 32)
+            self.assertEqual(self.tab.wider_pockets_checkbox.isEnabled(), not bool(custom))
+            if custom:
+                self.assertIn("preserved", self.tab.wider_pockets_checkbox.toolTip())
+
+    def test_remembered_slots_are_preserved_without_claiming_active_equipment(self):
+        data = create_empty_player_data()
+        data["uniques"] = ["invrows 6", "invslot1", "invslot2"]
+        data["inventory"] = [item(grid_y=5, cheated=True, custom_data={"eaqs_slot": "Helmet", "eaqs_player": "123"})]
+        self.tab.load_data(data)
+        self.assertTrue(self.tab.equipment_group.isHidden())
+        self.assertFalse(self.tab.wider_pockets_checkbox.isEnabled())
+        self.assertFalse(self.tab.clear_cheated_button.isEnabled())
+        before = deepcopy(data)
+        self.question.return_value = QMessageBox.Yes
+        self.tab.clear_all_cheated_flags()
+        self.assertEqual(data, before)
+        self.tab.save_changes()
+        self.assertEqual(data, before)
+
+    def test_saved_mod_boundary_protects_every_hidden_cell(self):
+        for rows in (1, 4):
+            with self.subTest(rows=rows):
+                data, root = equipment_fixture(rows)
+                data["uniques"] = ["invrows 6", "invslot1", "invslot2"]
+                data["inventory"].append(item(grid_y=rows, grid_x=1, custom_data={"eaqs_slot": "Quick2"}))
+                before = deepcopy(data)
+                self.tab.load_data(data, root)
+                self.assertEqual(len(self.tab.slots), rows * 8)
+                self.assertNotIn((0, rows), self.tab.slots)  # Empty quick cell.
+                self.assertNotIn((1, rows), self.tab.slots)  # Occupied quick cell.
+                self.assertNotIn((0, rows + 1), self.tab.slots)
+                self.assertIs(self.tab.equipment_slots[0].item_data, data["inventory"][1])
+                self.tab.update_inventory_grid()
+                self.assertEqual(len(self.tab.slots), rows * 8)
+                self.tab.save_changes()
+                self.assertEqual(data, before)
+
+    def test_normal_inventory_actions_cannot_convert_equipment(self):
+        slot = self.tab.equipment_slots[0]
+        before = deepcopy(self.data)
+        QApplication.clipboard().setText(json.dumps({"valheim_editor": "inventory_item", "item": item()}))
+        for action in (self.tab.edit_slot_item, self.tab.remove_slot_item, self.tab.copy_slot_item,
+                       self.tab.paste_slot_item, self.tab.add_item_to_slot):
+            action(slot)
+        self.assertEqual(self.data, before)
+        self.question.assert_not_called()
+
+    def test_delete_confirmation_cannot_affect_another_character(self):
+        before = deepcopy(self.data)
+        replacement, root = equipment_fixture()
+        replacement_before = deepcopy(replacement)
+        def switch(*args):
+            self.tab.load_data(replacement, root)
+            return QMessageBox.Yes
+        self.question.side_effect = switch
+        self.tab.remove_slot_item(self.tab.slots[(0, 0)])
+        self.assertEqual(self.data, before)
+        self.assertEqual(replacement, replacement_before)
+        self.assertIs(self.tab.slots[(0, 0)].item_data, replacement["inventory"][0])
+
+    def test_equipment_ui_edits_round_trip_without_other_player_changes(self):
+        for outer in (46, 47):
+            for nested in (33, 34):
+                for inventory in (109, 110):
+                    with self.subTest(outer=outer, nested=nested, inventory=inventory):
+                        data, root = equipment_fixture()
+                        data.update(version=nested, inventory_version=inventory, trailing_data_hex="aabb00ff")
+                        root["version"] = outer
+                        with patch.dict(player.ITEM_HASH_TO_PREFAB, {get_stable_hash_code("HelmetBronze"): "HelmetBronze"}):
+                            payload = player.pack_player_data_hex(data)
+                            decoded = player.unpack_player_data_hex(payload)
+                            expected = deepcopy(decoded)
+                            self.tab.load_data(decoded, root)
+                            self.tab.save_changes()
+                            self.assertEqual(player.pack_player_data_hex(decoded), payload)
+                            def edit(dialog):
+                                dialog.quality_input.setValue(3)
+                                return QDialog.Accepted
+                            with patch.object(ItemEditDialog, "exec", edit):
+                                self.tab.equipment_slots[0].click()
+                            self.tab.save_changes()
+                            expected["inventory"][1]["quality"] = 3
+                            self.assertEqual(player.unpack_player_data_hex(player.pack_player_data_hex(decoded)), expected)
 
     def test_dedicated_cells_preserve_vanilla_grid_and_opaque_data(self):
         before = deepcopy(self.data)
