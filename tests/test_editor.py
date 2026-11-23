@@ -122,6 +122,42 @@ class InventoryTests(QtTestCase):
         self.tab = self.widget(InventoryTab)
         self.tab.load_data(self.data)
 
+    def test_invalid_clipboard_never_changes_slot_or_inventory(self):
+        slot = self.tab.slots[2, 0]
+        before = deepcopy(self.data)
+        inputs = ["{", "null", "42", "[]", '"text"', "{}", "[" * 1200 + "]" * 1200]
+        for value in (None, [], item(stack=True), item(quality=-1), item(durability=float("nan")),
+                      item(crafter_id=2**63), item(world_level=256), item(cheated_flags=-1),
+                      item(custom_data={"mod": []}), item(prefab=""), item(prefab_hash=2**31),
+                      item(crafter_name="Smith"), item(prefab="\ud800"), item(unsupported=1)):
+            inputs.append(json.dumps({"valheim_editor": "inventory_item", "item": value}))
+        with patch("ui.inventoryTab.QApplication.clipboard") as clipboard:
+            for index, value in enumerate(inputs):
+                with self.subTest(index=index):
+                    self.warning.reset_mock()
+                    clipboard.return_value.text.return_value = value
+                    self.tab.paste_slot_item(slot)
+                    self.warning.assert_called_once()
+                    self.assertIsNone(slot.item_data)
+                    self.assertEqual(self.data, before)
+
+    def test_paste_custom_and_unresolved_items_retains_wire_metadata(self):
+        from tests.support import playerDataUtil
+
+        with patch("ui.inventoryTab.QApplication.clipboard") as clipboard:
+            for x, prefab in enumerate(("CustomModBlade", ""), start=2):
+                value = item(prefab=prefab, prefab_hash=-1234, custom_data={"mod:key": "value"},
+                             grid_y=14, cheated_flags=192, world_level=9)
+                clipboard.return_value.text.return_value = json.dumps(
+                    {"valheim_editor": "inventory_item", "item": value})
+                self.tab.paste_slot_item(self.tab.slots[x, 0])
+                self.assertEqual(self.data["inventory"][-1], dict(value, grid_x=x, grid_y=0))
+                decoded = playerDataUtil.unpack_player_data_hex(playerDataUtil.pack_player_data_hex(self.data))
+                result = decoded["inventory"][-1]
+                self.assertEqual(result["prefab_hash"], playerDataUtil.get_stable_hash_code(prefab) if prefab else -1234)
+                for key in ("custom_data", "cheated_flags", "world_level"):
+                    self.assertEqual(result[key], value[key])
+
     def test_theme_switch_preserves_slots_scroll_and_open_item_editor(self):
         from PySide6.QtGui import QPalette
         from ui.theme import apply_theme, theme_color
@@ -390,6 +426,21 @@ class StatsTests(QtTestCase):
 
 
 class AppearanceTests(QtTestCase):
+    def test_modded_styles_survive_unrelated_edits(self):
+        tab = self.widget(AppearanceTab)
+        for changed, other in (("hair", "beard"), ("beard", "hair")):
+            with self.subTest(changed=changed):
+                self.data.update(hair="ModHair", beard="ModBeard")
+                tab.load_data(self.data)
+                tab.save_changes()
+                self.assertEqual((self.data["hair"], self.data["beard"]), ("ModHair", "ModBeard"))
+                combo = getattr(tab, changed + "_combo")
+                known = combo.itemData(0)
+                combo.setCurrentIndex(0)
+                tab.save_changes()
+                self.assertEqual(self.data[changed], known)
+                self.assertEqual(self.data[other], "Mod" + other.title())
+
     def test_load_save_preserves_known_styles_and_precise_colors(self):
         self.data.update(hair="Hair1", beard="Beard1", skin_color=[0.12345, 0.45, 0.789], hair_color=[0.2, 0.3, 0.4])
         before = deepcopy(self.data)
@@ -760,9 +811,10 @@ class SkillsTests(QtTestCase):
                     tab.load_data(loaded)
                     tab.save_changes()
                     self.assertEqual(player.pack_player_data_hex(loaded), original_hex)
+                    expected = deepcopy(loaded)
+                    expected["skills"][1]["level"] = 25.5
                     tab.table.cellWidget(self.skill_row(tab, 1), 1).setValue(25.5)
                     tab.save_changes()
-                    expected = deepcopy(loaded)
                     self.root.update(version=outer, player_data_hex=player.pack_player_data_hex(loaded))
                     wrapper = Path(directory) / "source.json"
                     target = Path(directory) / "character.fch"

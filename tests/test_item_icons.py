@@ -73,7 +73,9 @@ class ItemIconTests(unittest.TestCase):
             self.assertIsNone(database.get_item_icon_path("Wood"))
 
     def test_manifest_cannot_escape_cache(self):
-        self.manifest(["../../outside.png"])
+        (self.path.parent / "item_icons").mkdir()
+        (self.path.parent / "outside.png").write_bytes(b"existing file")
+        self.manifest(["../outside.png"])
         self.assertIsNone(database.get_item_icon_path("Wood"))
 
     def test_invalid_entry_does_not_disable_unrelated_icons(self):

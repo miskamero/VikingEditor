@@ -1,3 +1,5 @@
+import json
+
 GRID_WIDTH = 8
 DEFAULT_GRID_HEIGHT = 4
 
@@ -14,17 +16,20 @@ MIN_DURABILITY = 0.0
 MAX_DURABILITY = 99999.0
 
 
-def validate_item(item, player_data=None, *, inventory_rows=None):
+def validate_item(item, player_data=None, *, inventory_rows=None, allow_hash_only=False):
     errors = []
 
     if not isinstance(item, dict):
         return ["Item data must be a dictionary."]
 
-    prefab = item.get("prefab")
+    prefab_hash = item.get("prefab_hash", 0)
+    if type(prefab_hash) is not int or not -(2**31) <= prefab_hash < 2**31:
+        errors.append("Prefab hash must fit in a signed 32-bit integer.")
+    prefab = item.get("prefab", "" if allow_hash_only else None)
 
     if not isinstance(prefab, str):
         errors.append("Prefab must be a string.")
-    elif not prefab.strip():
+    elif not prefab.strip() and not (allow_hash_only and prefab == "" and prefab_hash):
         errors.append("Prefab cannot be empty.")
 
     stack = item.get("stack", 1)
@@ -124,6 +129,15 @@ def validate_item(item, player_data=None, *, inventory_rows=None):
 
     if not isinstance(custom_data, dict):
         errors.append("Custom data must be a dictionary.")
+    elif len(custom_data) > 32767:
+        errors.append("Too many custom data entries for the inventory format.")
+    elif not all(isinstance(k, str) and isinstance(v, str) for k, v in custom_data.items()):
+        errors.append("Custom data keys and values must be strings.")
+
+    for field in ("world_level", "cheated_flags"):
+        value = item.get(field, 0)
+        if type(value) is not int or not 0 <= value <= 255:
+            errors.append(f"{field} must fit in an unsigned byte.")
 
     return errors
 
@@ -135,3 +149,23 @@ def is_valid_item(item, player_data=None):
         item,
         player_data
     )
+
+
+def validate_clipboard_item(item, inventory_rows):
+    """Check the item at its destination, including fields the form never exposes."""
+    errors = validate_item(item, inventory_rows=inventory_rows, allow_hash_only=True)
+    supported = {"prefab", "prefab_hash", "stack", "quality", "durability", "variant", "equipped",
+                 "cheated", "cheated_flags", "custom_data", "crafter_id", "crafter_name",
+                 "world_level", "picked_up", "grid_x", "grid_y"}
+    if item.keys() - supported:
+        errors.append("The item contains fields this save format cannot store.")
+    if item.get("crafter_name") and not item.get("crafter_id"):
+        errors.append("A crafter name requires a nonzero crafter ID.")
+    if isinstance(item.get("prefab"), str) and "\x00" in item["prefab"]:
+        errors.append("The prefab name contains a null character.")
+    try:
+        # Escaped, unpaired surrogates in JSON cannot be written as save strings.
+        json.dumps(item, ensure_ascii=False).encode("utf-8")
+    except (UnicodeError, RecursionError):
+        errors.append("The item contains invalid text or nested data.")
+    return errors

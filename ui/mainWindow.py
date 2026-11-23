@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import sys
 from datetime import datetime
 
@@ -36,6 +35,7 @@ from ui.valheim_detection import (
 
 from subscripts.fchUtil import (
     decompile_fch,
+    verified_payload,
     write_fch
 )
 
@@ -221,13 +221,11 @@ class MainWindow(QMainWindow):
 
         return editor_dir / "backups"
 
-    def create_backup(self, filename):
+    def create_backup(self, filename, character_name=None, *, allow_damaged=False):
         backup_root = self.get_backup_directory()
 
-        character_name = self.root_save.get(
-            "character_name",
-            "Viking"
-        ).strip()
+        if character_name is None:
+            character_name = self.root_save.get("character_name", "Viking").strip()
 
         if not character_name:
             character_name = "Viking"
@@ -251,16 +249,29 @@ class MainWindow(QMainWindow):
 
         backup_path = character_backup_dir / backup_filename
 
-        shutil.copyfile(filename, backup_path)
+        contents = Path(filename).read_bytes()
+        if not allow_damaged:
+            verified_payload(contents)
+        output = backup_path.open("xb")
+        try:
+            with output:
+                output.write(contents)
+                output.flush()
+                os.fsync(output.fileno())
+        except OSError:
+            backup_path.unlink()
+            raise
 
         return backup_path
 
-    def cleanup_old_backups(self, character_name):
+    def cleanup_old_backups(self, character_name, protected=()):
         max_backups = self.config.get(
             "max_backups_per_character",
             15
         )
 
+        if type(max_backups) is not int or max_backups < 0:
+            raise ValueError("Invalid backup retention limit.")
         if max_backups == 0:
             return
 
@@ -276,7 +287,21 @@ class MainWindow(QMainWindow):
         )
 
         for old_backup in backups[max_backups:]:
-            old_backup.unlink()
+            if old_backup.resolve() not in protected:
+                old_backup.unlink()
+
+    def backup_summary(self, backups, destination):
+        if not backups:
+            return "No backup was created."
+        message = "Recovery copies:\n" + "\n".join(map(str, backups))
+        protected = {path.resolve() for path in backups}
+        protected.add(Path(destination).resolve())
+        for directory in {backup.parent for backup in backups}:
+            try:
+                self.cleanup_old_backups(directory.name, protected)
+            except (OSError, ValueError) as exc:
+                message += f"\nCould not remove old backups: {exc}"
+        return message
 
     def show_about(self):
         msg = QMessageBox(self)
@@ -464,17 +489,20 @@ class MainWindow(QMainWindow):
 
         worker.start()
 
+    def clear_document(self):
+        self.btn_save_save.setEnabled(False)
+        self.tabs.setEnabled(False)
+        self.root_save = self.player_data = self.current_fch = None
+        self.loaded_backup = False
+        self.file_label.setText("No file loaded")
+
     def load_character(self, root, filename=None, backup=False):
         payload = root.get("player_data_hex")
         if not payload:
             raise ValueError("This character contains no player data.")
         data = unpack_player_data_hex(payload)
         # A tab can reject malformed data. Keep a partially loaded form unsavable.
-        self.btn_save_save.setEnabled(False)
-        self.tabs.setEnabled(False)
-        self.root_save = self.player_data = self.current_fch = None
-        self.loaded_backup = False
-        self.file_label.setText("No file loaded")
+        self.clear_document()
         self.inventory_tab.load_data(data, root)
         self.skills_tab.load_data(data)
         self.stats_tab.load_data(data, root)
@@ -682,24 +710,20 @@ class MainWindow(QMainWindow):
             if not filename:
                 return
 
-            backup_path = None
-            if self.config.get("auto_backup", True):
-                if self.current_fch and os.path.isfile(self.current_fch):
-                    backup_path = self.create_backup(self.current_fch)
-
             payload = pack_player_data_hex(self.player_data)
+            backups = []
+            destination = Path(filename)
+            source = Path(self.current_fch) if self.current_fch else None
+            if self.config.get("auto_backup", True) and source and source.is_file():
+                backups.append(self.create_backup(source))
+            if destination.exists() and not (source and source.exists() and source.samefile(destination)):
+                backups.append(self.create_backup(destination, destination.stem))
             write_fch(dict(self.root_save, player_data_hex=payload), filename)
             self.root_save["player_data_hex"] = payload
             self.current_fch = filename
             self.loaded_backup = False
             self.file_label.setText(f"Saved: {os.path.basename(filename)} (Char: {char_name})")
-            backup_message = "No backup was created."
-            if backup_path:
-                backup_message = f"Backup created:\n{backup_path}"
-                try:
-                    self.cleanup_old_backups(backup_path.parent.name)
-                except OSError as exc:
-                    backup_message += f"\nCould not remove old backups: {exc}"
+            backup_message = self.backup_summary(backups, destination)
 
             QMessageBox.information(
                 self,

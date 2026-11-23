@@ -176,12 +176,7 @@ def read_string_list(pkg: BinaryReader) -> list:
 
 # .fch -> JSON
 
-def decompile_fch(fch_path: str) -> dict:
-    print(f"Reading binary save: {fch_path}")
-
-    with open(fch_path, "rb") as f:
-        file_bytes = f.read()
-
+def verified_payload(file_bytes: bytes, *, for_editing=False) -> bytes:
     file_reader = BinaryReader(file_bytes)
 
     #
@@ -210,10 +205,17 @@ def decompile_fch(fch_path: str) -> dict:
     calculated_hash = hashlib.sha512(zpackage_bytes).digest()
 
     if calculated_hash != stored_hash:
-        print(
-            "Warning: File SHA-512 checksum mismatch. "
-            "Save may be corrupted, but we'll try to parse it anyway."
-        )
+        raise ValueError("SHA-512 checksum mismatch. The character file may be damaged. Use a known-good backup.")
+
+    if for_editing and file_reader.stream.read(1):
+        raise ValueError("Cannot edit character: unsupported trailing data after the checksum.")
+    return zpackage_bytes
+
+
+def decompile_fch(fch_path: str) -> dict:
+    print(f"Reading binary save: {fch_path}")
+    with open(fch_path, "rb") as f:
+        zpackage_bytes = verified_payload(f.read(), for_editing=True)
 
     pkg = BinaryReader(zpackage_bytes)
 
@@ -361,6 +363,8 @@ def decompile_fch(fch_path: str) -> dict:
     else:
         save_data["player_data_hex"] = None
 
+    if pkg.stream.read(1):
+        raise ValueError("Cannot edit character: unsupported trailing data in the signed payload.")
     print("Successfully unpacked save.")
 
     return save_data
@@ -683,21 +687,26 @@ def write_fch(save_data: dict, fch_path: str):
         calculated_hash
     )
 
-    # Finish writing before replacing an existing character.
+    if os.path.exists(fch_path):
+        # Recheck the destination: it may have changed since opening the editor.
+        decompile_fch(fch_path)
+    atomic_write(fch_path, file_writer.get_bytes())
+    print(f"Successfully compiled and hashed! File created at: {fch_path}")
+
+
+def atomic_write(fch_path, contents):
+    # Finish writing on the same filesystem before replacing an existing character.
     output = tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(fch_path)), delete=False)
     temporary_path = output.name
     try:
         with output:
-            output.write(file_writer.get_bytes())
+            output.write(contents)
+            output.flush()
+            os.fsync(output.fileno())
         os.replace(temporary_path, fch_path)
     finally:
         if os.path.exists(temporary_path):
             os.unlink(temporary_path)
-
-    print(
-        f"Successfully compiled and hashed! "
-        f"File created at: {fch_path}"
-    )
 
 # CLI, klinoff likey
 if __name__ == "__main__":

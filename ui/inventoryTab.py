@@ -26,7 +26,7 @@ from ui.tabStyle import DETAIL_STYLE
 from ui.theme import set_themed_style
 from ui.itemEditDialog import ItemEditDialog
 from subscripts.equipmentSlots import eaq_equipment, eaq_inventory_rows, has_slot_mod_data
-from subscripts.itemValidation import validate_item
+from subscripts.itemValidation import validate_item, validate_clipboard_item
 
 class InventoryTab(QWidget):
     GRID_WIDTH = 8
@@ -487,7 +487,7 @@ class InventoryTab(QWidget):
 
         try:
             clipboard_data = json.loads(clipboard_text)
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, RecursionError):
             QMessageBox.warning(
                 self,
                 "Invalid Item",
@@ -495,7 +495,7 @@ class InventoryTab(QWidget):
             )
             return
 
-        if clipboard_data.get("valheim_editor") != "inventory_item":
+        if not isinstance(clipboard_data, dict) or clipboard_data.get("valheim_editor") != "inventory_item":
             QMessageBox.warning(
                 self,
                 "Invalid Item",
@@ -517,6 +517,11 @@ class InventoryTab(QWidget):
 
         pasted_item["grid_x"] = slot.grid_x
         pasted_item["grid_y"] = slot.grid_y
+
+        errors = validate_clipboard_item(pasted_item, self.get_inventory_rows())
+        if errors:
+            QMessageBox.warning(self, "Invalid Item", "\n".join(errors))
+            return
 
         self.player_data["inventory"].append(pasted_item)
         slot.set_item(pasted_item)

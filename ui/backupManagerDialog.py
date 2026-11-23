@@ -1,5 +1,5 @@
 from pathlib import Path
-import shutil
+from subscripts.fchUtil import atomic_write, verified_payload
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -341,11 +341,6 @@ class BackupManagerDialog(QDialog):
 
         target_path = valheim_save_dir / f"{character_name}.fch"
 
-        valheim_save_dir.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
         if target_path.exists():
             answer = QMessageBox.question(
                 self,
@@ -361,27 +356,7 @@ class BackupManagerDialog(QDialog):
             if answer != QMessageBox.StandardButton.Yes:
                 return
 
-        try:
-            shutil.copy2(
-                backup_path,
-                target_path
-            )
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Restore Failed",
-                "Could not restore the backup to the Valheim save directory:\n\n"
-                f"{e}"
-            )
-            return
-
-        QMessageBox.information(
-            self,
-            "Backup Restored",
-            "The backup was restored to the Valheim character saves.\n\n"
-            f"File:\n{target_path}"
-        )
+        self.restore_file(backup_path, target_path)
 
     def restore_backup(self):
         backup_path = self.get_selected_backup()
@@ -428,56 +403,40 @@ class BackupManagerDialog(QDialog):
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        safety_backup = None
+        self.restore_file(backup_path, current_fch)
 
+    def restore_file(self, backup_path, destination):
+        backups = []
         try:
-            # Create a safety backup of the current save
-            if (
-                self.main_window.config.get("auto_backup", True)
-                and current_fch.is_file()
-            ):
-                safety_backup = self.main_window.create_backup(
-                    current_fch
-                )
-
-            # Restore the selected backup
-            shutil.copy2(
-                backup_path,
-                current_fch
-            )
-
-            if safety_backup is not None:
-                self.main_window.cleanup_old_backups(safety_backup.parent.name)
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Restore Failed",
-                "Could not restore the backup:\n\n"
-                f"{e}"
-            )
+            contents = backup_path.read_bytes()
+            verified_payload(contents)
+            if destination.exists():
+                if backup_path.samefile(destination):
+                    raise ValueError("The selected backup is already the destination file.")
+                try:
+                    verified_payload(destination.read_bytes())
+                except (ValueError, EOFError) as exc:
+                    answer = QMessageBox.question(
+                        self, "Damaged Destination",
+                        f"{destination}\n\n{exc}\n\nKeep a recovery copy of this damaged file "
+                        "and replace it with the selected backup?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+                    )
+                    if answer != QMessageBox.Yes:
+                        return
+                backups.append(self.main_window.create_backup(destination, destination.stem, allow_damaged=True))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(destination, contents)
+        except (OSError, ValueError, EOFError) as exc:
+            QMessageBox.critical(self, "Restore Failed", str(exc))
             return
 
-        if safety_backup is not None:
-            safety_message = (
-                f"Safety backup created:\n"
-                f"{safety_backup}"
-            )
-        else:
-            safety_message = (
-                "No safety backup was created "
-                "(automatic backups are disabled)."
-            )
-
-        QMessageBox.information(
-            self,
-            "Backup Restored",
-            "The backup was restored successfully.\n\n"
-            f"Restored:\n{current_fch}\n\n"
-            f"{safety_message}"
-        )
-
-        self.main_window.load_file(str(current_fch))
+        summary = self.main_window.backup_summary(backups, destination)
+        QMessageBox.information(self, "Backup Restored", f"Restored:\n{destination}\n\n{summary}")
+        loaded = self.main_window.current_fch
+        if loaded and Path(loaded).resolve() == destination.resolve():
+            if not self.main_window.load_file(str(destination)):
+                self.main_window.clear_document()
         self.load_backups()
 
     def delete_backup(self):

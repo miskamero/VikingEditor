@@ -110,21 +110,14 @@ class AppearanceTab(QWidget):
         self.beard_combo.setEnabled(model_idx == 0)
 
         # 2. Hair and Beard styles
-        hair_style = self.player_data.get("hair", "HairNone")
-        hair_idx = self.hair_combo.findData(hair_style)
-
-        if hair_idx != -1:
-            self.hair_combo.setCurrentIndex(hair_idx)
-        else:
-            self.hair_combo.setCurrentIndex(0)
-
-        beard_style = self.player_data.get("beard", "BeardNone")
-        beard_idx = self.beard_combo.findData(beard_style)
-
-        if beard_idx != -1:
-            self.beard_combo.setCurrentIndex(beard_idx)
-        else:
-            self.beard_combo.setCurrentIndex(0)
+        for field, combo, styles in (("hair", self.hair_combo, VALHEIM_HAIRS),
+                                     ("beard", self.beard_combo, VALHEIM_BEARDS)):
+            if combo.count() > len(styles):
+                combo.removeItem(len(styles))  # Custom style from the previous character.
+            style = player_data.get(field, combo.itemData(0))
+            if style not in styles:
+                combo.addItem(style, style)
+            combo.setCurrentIndex(combo.findData(style))
 
         # 3. Colors (0.0 - 1.0 floats to 0 - 255 ints)
         self.current_skin_rgb = self.player_data.get("skin_color", [1.0, 1.0, 1.0])

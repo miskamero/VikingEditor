@@ -111,6 +111,29 @@ class PlayerDataTests(unittest.TestCase):
 
 
 class CharacterFileTests(unittest.TestCase):
+    def test_unknown_outer_tails_rejected_for_editing(self):
+        from subscripts.fchUtil import write_fch
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "disposable.fch"
+            for version in (46, 47):
+                fresh = Path(directory) / f"{version}.fch"
+                write_fch(dict(create_new_character("Test"), version=version), fresh)
+                envelope = fresh.read_bytes()
+                size, = struct.unpack_from("<i", envelope)
+                payload = envelope[4:4 + size]
+                for signed, trailer in ((b"extension", b""), (b"", b"extension")):
+                    with self.subTest(version=version, signed=bool(signed)):
+                        body = payload + signed
+                        original = (struct.pack("<i", len(body)) + body + struct.pack("<i", 64)
+                                    + hashlib.sha512(body).digest() + trailer)
+                        path.write_bytes(original)
+                        with self.assertRaisesRegex(ValueError, "unsupported trailing data"):
+                            decompile_fch(path)
+                        with self.assertRaisesRegex(ValueError, "unsupported trailing data"):
+                            write_fch(create_new_character("Replacement"), path)
+                        self.assertEqual(path.read_bytes(), original)
+
     def test_new_characters_do_not_share_mutable_data(self):
         first, second = create_new_character("A"), create_new_character("B")
         first["profiles"][0]["known_worlds"]["Midgard"] = 10

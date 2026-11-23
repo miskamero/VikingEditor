@@ -60,6 +60,19 @@ def wire_payload(version=34, inventory_version=110):
 
 
 class NestedVersionTests(unittest.TestCase):
+    def test_wire_durability_survives_unrelated_edit(self):
+        for version in (109, 110):
+            raw, offset, flag, _ = wire_payload(inventory_version=version)
+            for cents in (-2147483648, -29, 0, 1, 29, 57, 9999999, 2147483647):
+                with self.subTest(version=version, cents=cents):
+                    original = bytearray(raw)
+                    struct.pack_into("<i", original, offset + 6, cents)
+                    data = player.unpack_player_data_hex(original.hex())
+                    self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), original)
+                    data["inventory"][0]["cheated"] = False
+                    original[flag] &= ~1
+                    self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), original)
+
     def test_unknown_skill_ids_and_unsupported_skill_layouts(self):
         for version in (33, 34):
             with self.subTest(version=version):

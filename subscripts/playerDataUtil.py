@@ -1,5 +1,6 @@
 import struct
 import io
+from decimal import Decimal
 
 from subscripts.itemDatabase import load_item_database
 
@@ -322,7 +323,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
         durability_raw = pkg.read_int32()
 
         item = {
-            "durability": durability_raw * 0.01,
+            "durability": durability_raw / 100,
             "grid_x": pkg.read_byte(),
             "grid_y": pkg.read_byte(),
             "world_level": pkg.read_byte()
@@ -569,9 +570,8 @@ def pack_player_data_hex(data: dict) -> str:
             100.0
         )
 
-        durability_raw = int(
-            durability * 100.0
-        )
+        # Truncate sub-cent edits as before, in decimal so 0.29 encodes as 29.
+        durability_raw = int(Decimal(str(durability)) * 100)
 
         pkg.write_int32(durability_raw)
 
