@@ -16,6 +16,7 @@ from PySide6.QtGui import QPainter, QPen, QColor, QDoubleValidator
 from PySide6.QtCore import Qt
 
 from data.skills import VALHEIM_SKILLS
+from ui.theme import set_themed_style, theme_color
 
 
 class ModernSpinBox(QDoubleSpinBox):
@@ -45,7 +46,7 @@ class ModernSpinBox(QDoubleSpinBox):
 
         painter.setPen(
             QPen(
-                QColor("#7b8389"),
+                QColor(theme_color("arrow")),
                 1.5,
                 Qt.PenStyle.SolidLine,
                 Qt.PenCapStyle.RoundCap,
@@ -186,34 +187,34 @@ class SkillsTab(QWidget):
                     Qt.AlignmentFlag.AlignCenter
                 )
 
-        self.table.setStyleSheet("""
+        set_themed_style(self.table, """
             QTableWidget {
-                background-color: #ffffff;
-                alternate-background-color: #fafafa;
-                border: 1px solid #e2e5e8;
+                background-color: @surface@;
+                alternate-background-color: @alternate@;
+                border: 1px solid @divider@;
                 border-radius: 8px;
                 gridline-color: transparent;
-                selection-background-color: #eef6e8;
-                selection-color: #202420;
+                selection-background-color: @selection@;
+                selection-color: @text@;
                 outline: none;
             }
 
             QTableWidget::item {
                 padding: 6px 10px;
                 border: none;
-                color: #252525;
+                color: @text@;
             }
 
             QTableWidget::item:selected {
-                background-color: #eef6e8;
-                color: #202525;
+                background-color: @selection@;
+                color: @text@;
             }
 
             QHeaderView::section {
-                background-color: #f6f7f8;
-                color: #686d72;
+                background-color: @subtle@;
+                color: @muted@;
                 border: none;
-                border-bottom: 1px solid #e2e5e8;
+                border-bottom: 1px solid @divider@;
                 padding: 8px 10px;
                 font-size: 11px;
                 font-weight: 600;
@@ -230,49 +231,31 @@ class SkillsTab(QWidget):
 
         layout.addWidget(self.table)
 
-        self.btn_max_all.setStyleSheet("""
+        toolbar_style = """
             QPushButton {
-                background-color: #ffffff;
-                color: #303438;
-                border: 1px solid #d7dade;
+                background-color: @surface@;
+                color: @text@;
+                border: 1px solid @border@;
                 border-radius: 6px;
                 padding: 6px 14px;
                 font-weight: 500;
             }
 
             QPushButton:hover {
-                background-color: #f5f7f8;
-                border-color: #bfc4c9;
+                background-color: @subtle@;
+                border-color: @hoverBorder@;
             }
 
             QPushButton:pressed {
-                background-color: #eceff1;
+                background-color: @pressed@;
             }
-        """)
+        """
+        for button in (self.btn_max_all, self.btn_set_all0):
+            set_themed_style(button, toolbar_style)
 
-        self.btn_set_all0.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                color: #303438;
-                border: 1px solid #d7dade;
-                border-radius: 6px;
-                padding: 6px 14px;
-                font-weight: 500;
-            }
-
-            QPushButton:hover {
-                background-color: #f5f7f8;
-                border-color: #bfc4c9;
-            }
-
-            QPushButton:pressed {
-                background-color: #eceff1;
-            }
-        """)
-
-        self.skill_count_label.setStyleSheet("""
+        set_themed_style(self.skill_count_label, """
             QLabel {
-                color: #777d82;
+                color: @muted@;
                 font-size: 11px;
                 font-weight: 500;
             }
@@ -426,11 +409,11 @@ class SkillsTab(QWidget):
         status_button.setChecked(unlocked)
         status_button.setFixedWidth(88)
         status_button.setMinimumHeight(29)
-        status_button.setStyleSheet("""
+        set_themed_style(status_button, """
             QPushButton {
-                background-color: #ffffff;
-                color: #587544;
-                border: 1px solid #bfd2b2;
+                background-color: @surface@;
+                color: @accentText@;
+                border: 1px solid @hoverBorder@;
                 border-radius: 5px;
                 padding: 4px 12px;
                 font-size: 10px;
@@ -438,18 +421,18 @@ class SkillsTab(QWidget):
             }
 
             QPushButton:checked {
-                background-color: #edf6e7;
-                color: #55743e;
-                border-color: #c9dfba;
+                background-color: @selection@;
+                color: @accentText@;
+                border-color: @hoverBorder@;
             }
 
             QPushButton:hover {
-                background-color: #f2f8ee;
-                border-color: #9fbd8d;
+                background-color: @hover@;
+                border-color: @hoverBorder@;
             }
 
             QPushButton:pressed {
-                background-color: #e8f1e2;
+                background-color: @selection@;
             }
         """)
         status_button.setToolTip(
@@ -495,27 +478,27 @@ class SkillsTab(QWidget):
             )
 
     def style_spinbox(self, widget):
-        widget.setStyleSheet("""
+        set_themed_style(widget, """
             QDoubleSpinBox {
-                background-color: #ffffff;
-                color: #303438;
-                border: 1px solid #d9dde1;
+                background-color: @surface@;
+                color: @text@;
+                border: 1px solid @border@;
                 border-radius: 6px;
                 padding: 3px 26px 3px 8px;
             }
 
             QDoubleSpinBox:hover {
-                border-color: #b9bec3;
+                border-color: @hoverBorder@;
             }
 
             QDoubleSpinBox:focus {
-                border-color: #9caf8d;
+                border-color: @focus@;
             }
 
             QDoubleSpinBox:disabled {
-                background-color: #f5f6f7;
-                color: #aeb3b7;
-                border-color: #e4e6e8;
+                background-color: @disabledSurface@;
+                color: @disabledText@;
+                border-color: @divider@;
             }
 
             QDoubleSpinBox::up-button,
@@ -527,12 +510,12 @@ class SkillsTab(QWidget):
 
             QDoubleSpinBox::up-button:hover,
             QDoubleSpinBox::down-button:hover {
-                background-color: #f1f4ef;
+                background-color: @hover@;
             }
 
             QDoubleSpinBox::up-button:pressed,
             QDoubleSpinBox::down-button:pressed {
-                background-color: #e7eee3;
+                background-color: @selection@;
             }
         """)
 

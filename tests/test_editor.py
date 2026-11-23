@@ -61,6 +61,29 @@ class QtTestCase(unittest.TestCase):
 
 
 class MainWindowTests(QtTestCase):
+    def test_theme_preference_round_trip_preserves_other_settings(self):
+        from ui import valheim_detection
+        from ui.mainWindow import MainWindow
+        from ui.theme import apply_theme
+
+        self.addCleanup(apply_theme, False)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(valheim_detection, "VALHEIM_CONFIG_PATH", Path(directory) / "config.json"), \
+             patch("ui.mainWindow.is_valheim_running", return_value=False), \
+             patch.object(MainWindow, "check_valheim_installation", return_value=False):
+            valheim_detection.save_config({"is_first_launch": False, "max_backups_per_character": 7})
+            original = valheim_detection.load_config()
+            window = self.widget(MainWindow)
+            self.assertFalse(window.dark_mode_action.isChecked())
+            window.dark_mode_action.trigger()
+            self.assertEqual(valheim_detection.load_config(), {**original, "theme": "dark"})
+            window.close()
+
+            reopened = self.widget(MainWindow)
+            self.assertTrue(reopened.dark_mode_action.isChecked())
+            reopened.dark_mode_action.trigger()
+            self.assertEqual(valheim_detection.load_config(), {**original, "theme": "light"})
+
     def test_document_identity_after_failed_open_backup_and_save_as(self):
         from ui.mainWindow import MainWindow
         from subscripts.fchUtil import write_fch
@@ -98,6 +121,39 @@ class InventoryTests(QtTestCase):
         self.data["inventory"] = [item(cheated=True), item(grid_x=1), item(grid_y=5, cheated=True)]
         self.tab = self.widget(InventoryTab)
         self.tab.load_data(self.data)
+
+    def test_theme_switch_preserves_slots_scroll_and_open_item_editor(self):
+        from PySide6.QtGui import QPalette
+        from ui.theme import apply_theme, theme_color
+
+        self.addCleanup(apply_theme, False)
+        self.tab.resize(820, 320)
+        self.tab.show()
+        self.app.processEvents()
+        slot = self.tab.slots[(0, 0)]
+        bar = self.tab.scroll_area.verticalScrollBar()
+        bar.setValue(57)
+        before = deepcopy(self.data)
+        size, scroll, light_style = slot.size(), bar.value(), slot.styleSheet()
+        editor = self.widget(ItemEditDialog, self.data["inventory"][0])
+        editor.stack_input.setValue(3)
+        light_palette = self.app.palette().color(QPalette.Window)
+
+        apply_theme(True)
+        self.app.processEvents()
+        self.assertEqual(self.app.palette().color(QPalette.Window).name(), theme_color("page"))
+        self.assertIn(theme_color("empty"), slot.styleSheet())
+        new_editor = self.widget(ItemEditDialog, self.data["inventory"][0])
+        self.assertEqual(new_editor.styleSheet(), editor.styleSheet())
+        self.assertIn(theme_color("page"), editor.styleSheet())
+        self.assertIs(self.tab.slots[(0, 0)], slot)
+        self.assertEqual((slot.size(), bar.value()), (size, scroll))
+        self.assertEqual(editor.stack_input.value(), 3)
+        self.assertEqual(self.data, before)
+
+        apply_theme(False)
+        self.assertEqual(slot.styleSheet(), light_style)
+        self.assertEqual(self.app.palette().color(QPalette.Window), light_palette)
 
     def test_pockets_extend_the_grid_without_resizing_existing_slots(self):
         self.tab.resize(820, 520)

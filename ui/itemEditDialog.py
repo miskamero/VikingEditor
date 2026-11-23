@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from ui.itemSearchWidget import ItemSearchWidget, display_name, item_icon
 from ui.tabStyle import DETAIL_STYLE, polish_forms
+from ui.theme import set_themed_style
 from subscripts.itemValidation import validate_item
 
 
@@ -27,13 +28,13 @@ class ItemEditDialog(QDialog):
             for rule in re.findall(r"[^{}]+\{[^{}]*\}", DETAIL_STYLE)
             if "QDoubleSpinBox" in rule
         )
-        self.setStyleSheet(DETAIL_STYLE + integer_style + """
-            QDialog#detailPage { background: #f4f6f7; }
-            QLabel#itemPreview { background: #252b27; border-radius: 10px; }
+        set_themed_style(self, DETAIL_STYLE + integer_style + """
+            QDialog#detailPage { background: @page@; }
+            QLabel#itemPreview { background: @preview@; border-radius: 10px; }
             QLabel#itemName { font-size: 18px; font-weight: 600; }
-            QPushButton#applyItem { background: #45623a; color: white; border-color: #45623a; }
-            QPushButton#applyItem:hover { background: #567849; }
-            QPushButton#applyItem:disabled { background: #dce3d8; color: #899582; border-color: #dce3d8; }
+            QPushButton#applyItem { background: @primary@; color: @onPrimary@; border-color: @primary@; }
+            QPushButton#applyItem:hover { background: @primaryHover@; }
+            QPushButton#applyItem:disabled { background: @disabledSurface@; color: @disabledText@; border-color: @disabledSurface@; }
         """)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 18, 20, 18)

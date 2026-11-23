@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QPalette
 from data.beards import VALHEIM_BEARDS
 from data.hairs import VALHEIM_HAIRS
 from ui.tabStyle import detail_layout, polish_forms
+from ui.theme import set_themed_style
 
 class AppearanceTab(QWidget):
     def __init__(self):
@@ -141,8 +142,9 @@ class AppearanceTab(QWidget):
         palette.setColor(QPalette.Window, QColor(r, g, b))
         widget.setPalette(palette)
         color = QColor(r, g, b)
-        widget.setStyleSheet(
-            f"background-color: {color.name()}; border: 1px solid #d7dde0; border-radius: 8px;"
+        set_themed_style(
+            widget,
+            f"background-color: {color.name()}; border: 1px solid @border@; border-radius: 8px;"
         )
         label = self.skin_color_label if widget is self.skin_preview else self.hair_color_label
         label.setText(f"{color.name().upper()}   ·   RGB {r}, {g}, {b}")

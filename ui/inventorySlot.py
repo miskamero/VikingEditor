@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from subscripts.itemDatabase import get_item_icon_path
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QSizePolicy,
 )
+from ui.theme import set_themed_style
 
 def format_item_name(prefab):
     special_names = {
@@ -143,20 +145,21 @@ def get_item_icon(prefab):
 class InventorySlot(QToolButton):
     # Match the dialog buttons without inheriting their minimum form-control height.
     STYLE = """
-        QToolButton { padding: 0; background: white; color: #303438; border: 1px solid #d7dade; border-radius: 6px; }
+        QToolButton { padding: 0; background: @surface@; color: @text@; border: 1px solid @border@; border-radius: 6px; }
         QToolButton[slotState="empty"] {
-            background: #f8fafb; border: 1px solid #dfe4e5; color: transparent;
+            background: @empty@; border: 1px solid @divider@; color: transparent;
         }
-        QToolButton[slotState="equipped"] { background: #eaf1e5; border-color: #a3b598; }
-        QToolButton:enabled:hover { background: #f0f5ec; border: 1px solid #a3b598; color: #45623a; }
-        QToolButton:enabled:focus { border: 2px solid #6d895b; color: #45623a; }
-        QToolButton:enabled:pressed { background: #e3eddc; }
-        QLabel#itemName { color: #303438; font-weight: 600; }
-        QLabel#quality, QLabel#stack { color: #536348; font-weight: 600; }
-        QLabel#missingIcon { color: #737c80; font-size: 20px; }
+        QToolButton[slotState="equipped"] { background: @selection@; border-color: @hoverBorder@; }
+        QToolButton:enabled:hover { background: @hover@; border: 1px solid @hoverBorder@; color: @accentText@; }
+        QToolButton:enabled:focus { border: 2px solid @focus@; color: @accentText@; }
+        QToolButton:enabled:pressed { background: @pressed@; }
+        QLabel#itemName { color: @text@; font-weight: 600; }
+        QLabel#quality { color: @quality@; font-weight: 600; }
+        QLabel#stack { color: @secondary@; font-weight: 600; }
+        QLabel#missingIcon { color: @muted@; font-size: 20px; }
         QLabel#equippedMark, QLabel#cheatedMark { border-radius: 3px; font-weight: 600; }
-        QLabel#equippedMark { color: white; background: #45623a; }
-        QLabel#cheatedMark { color: #793b31; background: #f3e4de; }
+        QLabel#equippedMark { color: @onPrimary@; background: @primary@; }
+        QLabel#cheatedMark { color: @warningText@; background: @warningSurface@; }
     """
 
     def __init__(self, x, y, parent=None):
@@ -171,7 +174,7 @@ class InventorySlot(QToolButton):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(self.STYLE)
+        set_themed_style(self, self.STYLE)
 
         self.icon_label = self.make_label("missingIcon")
         self.name_label = self.make_label("itemName")

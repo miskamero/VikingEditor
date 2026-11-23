@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from pathlib import Path
 
 from ui.settingsDialog import SettingsDialog
+from ui.theme import apply_theme
 from ui.backupManagerDialog import BackupManagerDialog
 
 from ui.inventoryTab import InventoryTab
@@ -91,6 +92,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.config = load_config()
+        dark = self.config.get("theme") == "dark"
+        apply_theme(dark)
 
         if is_valheim_running():
             warning_msg = valheim_warning_message()
@@ -115,6 +118,11 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("File")
+        view_menu = menu_bar.addMenu("View")
+        self.dark_mode_action = view_menu.addAction("Dark Mode")
+        self.dark_mode_action.setCheckable(True)
+        self.dark_mode_action.setChecked(dark)
+        self.dark_mode_action.toggled.connect(self.set_dark_mode)
         help_menu = menu_bar.addMenu("Help")
 
         new_character_action = file_menu.addAction("New Character...")
@@ -194,6 +202,11 @@ class MainWindow(QMainWindow):
             self.show_about()
             self.config["is_first_launch"] = False
             save_config(self.config)
+
+    def set_dark_mode(self, enabled):
+        apply_theme(enabled)
+        self.config["theme"] = "dark" if enabled else "light"
+        save_config(self.config)
 
     def get_backup_directory(self):
         backup_dir = self.config.get("backup_dir", "").strip()

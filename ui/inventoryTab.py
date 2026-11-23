@@ -23,6 +23,7 @@ from PySide6.QtCore import QEvent, Qt
 
 from ui.inventorySlot import InventorySlot
 from ui.tabStyle import DETAIL_STYLE
+from ui.theme import set_themed_style
 from ui.itemEditDialog import ItemEditDialog
 from subscripts.equipmentSlots import eaq_equipment, eaq_inventory_rows, has_slot_mod_data
 from subscripts.itemValidation import validate_item
@@ -43,7 +44,7 @@ class InventoryTab(QWidget):
         self._slot_size = self.MIN_SLOT_SIZE
         self.setObjectName("detailPage")
         self.setAttribute(Qt.WA_StyledBackground)
-        self.setStyleSheet(DETAIL_STYLE)
+        set_themed_style(self, DETAIL_STYLE)
 
         page = QBoxLayout(QBoxLayout.LeftToRight, self)
         page.setContentsMargins(20, 18, 20, 18)

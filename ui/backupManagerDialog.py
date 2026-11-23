@@ -1,8 +1,6 @@
 from pathlib import Path
 import shutil
 
-from ui.valheim_detection import get_valheim_character_save_directory
-
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -16,6 +14,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
+from ui.theme import set_themed_style
+from ui.valheim_detection import get_valheim_character_save_directory
 
 
 class BackupManagerDialog(QDialog):
@@ -82,13 +82,8 @@ class BackupManagerDialog(QDialog):
         ):
             button.setMinimumHeight(32)
 
-        self.delete_button.setStyleSheet(
-            "QPushButton { color: #b00020; }"
-        )
-
-        self.delete_all_button.setStyleSheet(
-            "QPushButton { color: #b00020; }"
-        )
+        for button in (self.delete_button, self.delete_all_button):
+            set_themed_style(button, "QPushButton:enabled { color: @danger@; }")
 
         button_layout.addWidget(self.open_button)
 
