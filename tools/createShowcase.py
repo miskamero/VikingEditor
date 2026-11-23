@@ -20,8 +20,7 @@ from ui.mainWindow import MainWindow
 from ui.itemEditDialog import ItemEditDialog
 
 
-def main():
-    destination = ROOT / "docs" / "media"
+def main(destination):
     destination.mkdir(parents=True, exist_ok=True)
     app = QApplication([])
     app.setStyle("Fusion")
@@ -55,7 +54,8 @@ def main():
     data.update(health=125, max_health=150, stamina=100, max_stamina=150,
                 hair="Hair1", beard="Beard1", skin_color=[0.8,0.65,0.5], hair_color=[0.22,0.14,0.08],
                 foods=[dict(name="Bread",time=900),dict(name="CookedMeat",time=600)],
-                skills=[dict(id=i,level=level,xp=12) for i,level in ((1,65),(2,48),(3,56),(4,42),(5,60),(6,32))],
+                skills=[dict(id=i,level=level,xp=12) for i,level in ((1,65),(2,48),(3,56),(4,42),(5,60),(6,32),
+                                                                   (12345,42.5))],
                 known_recipes=prefabs, known_stations={"forge":5,"workbench":4,"cauldron":3},
                 known_material=prefabs[12:], trophies=["TrophyDeer","TrophyEikthyr","TrophyTroll"],
                 known_biomes=["Meadows","BlackForest","Swamp","Mountain"],
@@ -81,7 +81,7 @@ def main():
         index = next(i for i in range(window.tabs.count()) if window.tabs.tabText(i) == title)
         window.tabs.setCurrentIndex(index)
         app.processEvents()
-        path = destination / ("stats.png" if title == "Vitals" else f"{title.lower()}.png")
+        path = destination / f"{title.lower()}.png"
         window.grab().save(str(path))
         with Image.open(path) as image:
             frames.append(image.copy().convert("RGB"))
@@ -93,9 +93,14 @@ def main():
     app.processEvents()
     dialog.grab().save(str(destination / "item-editor.png"))
     dialog.close()
+    window.tabs.setCurrentIndex(0)
+    with patch("ui.mainWindow.save_config"):
+        window.dark_mode_action.trigger()
+    app.processEvents()
+    window.grab().save(str(destination / "inventory-dark.png"))
     window.close()
     print(f"Created showcase media in {destination}")
 
 
 if __name__ == "__main__":
-    main()
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "media")

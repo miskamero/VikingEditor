@@ -1,5 +1,5 @@
 INFO_TEXT = """
-<h1><b>VikingEditor v2.3.0</b></h1>
+<h1><b>VikingEditor v2.4.0</b></h1>
 
 <h3><b>MAKE SURE TO BACKUP YOUR FILES BEFORE USING THIS EDITOR!</b></h3>
 

@@ -1,7 +1,7 @@
 """Independent wire fixtures based on the installed game's Save/Load methods.
 
-These are synthetic, not copies of private character files. See
-docs/nested-save-compatibility.md for assembly evidence and real-save checks.
+These are synthetic wire fixtures. See the README's save compatibility table
+for the supported format versions.
 """
 from contextlib import redirect_stdout
 from copy import deepcopy

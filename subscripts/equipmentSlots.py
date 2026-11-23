@@ -1,6 +1,6 @@
 """Conservative recognition of EAQ 3.2's saved equipment cells.
 
-See docs/equipment-slots.md for the pinned upstream format and limitations.
+See docs/equipment-slots.md for supported layouts and limitations.
 Backups are evidence of dimensions, never a second editable inventory.
 """
 import base64
