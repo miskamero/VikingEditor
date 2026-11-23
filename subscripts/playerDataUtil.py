@@ -1,7 +1,5 @@
 import struct
 import io
-import json
-from pathlib import Path
 
 from subscripts.itemDatabase import load_item_database
 

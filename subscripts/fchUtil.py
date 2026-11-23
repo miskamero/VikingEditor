@@ -1,3 +1,5 @@
+import os
+import tempfile
 import sys
 import json
 import struct
@@ -370,7 +372,10 @@ def compile_fch(json_path: str, fch_path: str):
 
     with open(json_path, "r", encoding="utf-8") as f:
         save_data = json.load(f)
+    write_fch(save_data, fch_path)
 
+
+def write_fch(save_data: dict, fch_path: str):
     pkg = BinaryWriter()
 
     # Preserve existing saves' version; legacy JSON without a version used v46.
@@ -678,10 +683,16 @@ def compile_fch(json_path: str, fch_path: str):
         calculated_hash
     )
 
-    with open(fch_path, "wb") as f:
-        f.write(
-            file_writer.get_bytes()
-        )
+    # Finish writing before replacing an existing character.
+    output = tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(fch_path)), delete=False)
+    temporary_path = output.name
+    try:
+        with output:
+            output.write(file_writer.get_bytes())
+        os.replace(temporary_path, fch_path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
 
     print(
         f"Successfully compiled and hashed! "

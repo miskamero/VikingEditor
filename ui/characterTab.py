@@ -1,10 +1,8 @@
 from datetime import datetime
 from ui.tabStyle import detail_layout, polish_forms
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
-    QVBoxLayout,
     QHBoxLayout,
     QGroupBox,
     QFormLayout,
@@ -23,9 +21,7 @@ class CharacterTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        main_layout = detail_layout(
-            self, "Character", "Edit your character's name and review identity and save details.", scroll=True
-        )
+        main_layout = detail_layout(self, scroll=True)
         main_layout.setSpacing(12)
 
         # ==========================================================
@@ -258,7 +254,7 @@ class CharacterTab(QWidget):
 
     def save_changes(self):
         if not self.root_save:
-            return
+            return False
 
         new_name = self.name_input.text().strip()
 
@@ -268,12 +264,13 @@ class CharacterTab(QWidget):
                 "Invalid Character Name",
                 "Character name cannot be empty."
             )
-            return
+            return False
 
         self.root_save["character_name"] = new_name
 
         if self.player_data is not None:
             self.player_data["character_name"] = new_name
+        return True
 
     def copy_player_id(self):
         player_id = self.player_id_input.text()

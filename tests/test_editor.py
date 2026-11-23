@@ -60,6 +60,38 @@ class QtTestCase(unittest.TestCase):
         self.app.processEvents()
 
 
+class MainWindowTests(QtTestCase):
+    def test_document_identity_after_failed_open_backup_and_save_as(self):
+        from ui.mainWindow import MainWindow
+        from subscripts.fchUtil import write_fch
+
+        with patch("ui.mainWindow.load_config", return_value={"is_first_launch": False}), \
+             patch("ui.mainWindow.is_valheim_running", return_value=False), \
+             patch.object(MainWindow, "check_valheim_installation", return_value=False):
+            window = self.widget(MainWindow)
+        self.assertFalse(window.btn_save_save.isEnabled())
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            source = Path(directory) / "source.fch"
+            target = Path(directory) / "restored.fch"
+            write_fch(self.root, source)
+            self.assertTrue(window.load_file(str(source)))
+            self.assertTrue(window.btn_save_save.isEnabled())
+            with patch("ui.mainWindow.decompile_fch", return_value={}), patch.object(QMessageBox, "critical"):
+                self.assertFalse(window.load_file("empty.fch"))
+            self.assertEqual(window.current_fch, str(source))
+            self.assertTrue(window.load_file(source, backup=True))
+            self.assertIsNone(window.current_fch)
+            with patch("ui.mainWindow.QFileDialog.getSaveFileName", return_value=(str(target), "")):
+                window.save_save_file()
+            self.assertEqual(window.current_fch, str(target))
+            self.assertEqual(decompile_fch(target)["character_name"], "Test Viking")
+            before = target.read_bytes()
+            with patch("subscripts.fchUtil.os.replace", side_effect=OSError), self.assertRaises(OSError):
+                write_fch(self.root, target)
+            self.assertEqual(target.read_bytes(), before)
+            self.assertEqual(set(Path(directory).iterdir()), {source, target})
+
+
 class InventoryTests(QtTestCase):
     def setUp(self):
         super().setUp()

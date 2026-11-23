@@ -23,9 +23,7 @@ class StatisticsTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        layout = detail_layout(
-            self, "Statistics", "Explore your character's lifetime activity."
-        )
+        layout = detail_layout(self)
         self.table_controls = {}
 
         self.tabs = QTabWidget()
@@ -154,35 +152,13 @@ class StatisticsTab(QWidget):
             } if isinstance(data, dict) else {}
             self.populate_table(table, valid_data)
 
-    def get_first_populated(self, dictionaries):
-        for data in dictionaries:
-            if data:
-                return data
-
-        return {}
-
     def populate_table(self, table, data):
         table.setRowCount(0)
 
         total = sum(data.values())
 
-        total_label = None
-
-        if table is self.enemies_table:
-            total_label = self.enemies_total
-        elif table is self.pickups_table:
-            total_label = self.pickups_total
-        elif table is self.crafted_table:
-            total_label = self.crafted_total
-        elif table is self.pickables_table:
-            total_label = self.pickables_total
-        elif table is self.pieces_table:
-            total_label = self.pieces_total
-
-        if total_label:
-            total_label.setText(
-                f"Total: {self.format_count(total)}"
-            )
+        total_label = self.table_controls[table][1]
+        total_label.setText(f"Total: {self.format_count(total)}")
 
         sorted_items = sorted(
             data.items(),
@@ -190,9 +166,8 @@ class StatisticsTab(QWidget):
             reverse=True
         )
 
-        for name, count in sorted_items:
-            row = table.rowCount()
-            table.insertRow(row)
+        table.setRowCount(len(sorted_items))
+        for row, (name, count) in enumerate(sorted_items):
 
             display_name = self.format_name(name)
 
@@ -243,11 +218,7 @@ class StatisticsTab(QWidget):
 
     def clear_tables(self):
         for table, (search, total, status) in self.table_controls.items():
+            table.setRowCount(0)
             search.clear()
             total.setText("Total: 0")
             status.setText("No activity recorded.")
-        self.enemies_table.setRowCount(0)
-        self.pickups_table.setRowCount(0)
-        self.crafted_table.setRowCount(0)
-        self.pickables_table.setRowCount(0)
-        self.pieces_table.setRowCount(0)

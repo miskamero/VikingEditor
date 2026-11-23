@@ -255,13 +255,6 @@ def load_saved_valheim_path() -> Optional[Path]:
     return Path(path)
 
 
-def save_valheim_path(valheim_dir):
-    config = load_config()
-
-    config["valheim_dir"] = str(valheim_dir)
-
-    save_config(config)
-
 def get_valheim_character_save_directory() -> Path:
     userprofile = os.environ.get("USERPROFILE")
 

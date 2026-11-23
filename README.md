@@ -67,7 +67,7 @@ For automated test commands and coverage, see [Automated tests](CONTRIBUTING.md#
   * Reset or maximize unlocked skills.
   * Supports both combat and non-combat skills.
 
-* **Stats**
+* **Vitals**
 
   * Edit character health, stamina, Eitr, and other supported player attributes.
   * Cheats Flag toggling
@@ -264,7 +264,7 @@ If it cannot find it, the application will allow you to select the Valheim insta
 3. Select your Valheim `.fch` character file.
 4. The character data will be decompiled and loaded into the editor.
 5. Navigate through the tabs and make your desired changes.
-6. Click **Save Savefile**.
+6. Click **Save As...**.
 7. Choose where to save the resulting `.fch` file.
 8. Place the saved character file in your Valheim character directory if necessary.
 9. Launch Valheim and load the character.
@@ -281,7 +281,7 @@ VikingEditor can create a brand-new Valheim character without first having an ex
 2. Enter the desired character name.
 3. The editor generates a fresh character.
 4. Edit the character using the normal editor tabs.
-5. Select **Save Savefile**.
+5. Select **Save As...**.
 6. Choose where to save the new `.fch` file.
 7. Place the file in your Valheim character directory.
 8. Launch Valheim and use the new character.

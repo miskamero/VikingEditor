@@ -27,9 +27,7 @@ class WorldsTab(QWidget):
         self.worlds = []
         self.known_worlds = {}
 
-        main_layout = detail_layout(
-            self, "Worlds", "Browse visited worlds, time played, and saved character locations.", scroll=True
-        )
+        main_layout = detail_layout(self, scroll=True)
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)

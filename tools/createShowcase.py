@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from PIL import Image
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontDatabase, QPalette, QColor
 from PySide6.QtWidgets import QApplication
 from subscripts.newCharacter import create_empty_player_data, create_new_character
@@ -74,13 +73,15 @@ def main():
     window.character_tab.load_data(data, root)
     window.file_label.setText("Demo character: Astrid  ·  Illustrative data")
     window.resize(1100, 780)
+    window.tabs.setEnabled(True)
+    window.btn_save_save.setEnabled(True)
     window.show()
     frames = []
-    for title in ("Inventory", "Skills", "Stats", "Progress", "Statistics"):
+    for title in ("Inventory", "Skills", "Vitals", "Progress", "Statistics"):
         index = next(i for i in range(window.tabs.count()) if window.tabs.tabText(i) == title)
         window.tabs.setCurrentIndex(index)
         app.processEvents()
-        path = destination / f"{title.lower()}.png"
+        path = destination / ("stats.png" if title == "Vitals" else f"{title.lower()}.png")
         window.grab().save(str(path))
         with Image.open(path) as image:
             frames.append(image.copy().convert("RGB"))

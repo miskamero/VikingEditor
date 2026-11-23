@@ -22,9 +22,7 @@ class StatsTab(QWidget):
         self.player_data = None
         self.root_save = None
 
-        main_layout = detail_layout(
-            self, "Stats", "Manage vitals, active food buffs, and your Forsaken power.", scroll=True
-        )
+        main_layout = detail_layout(self, scroll=True)
 
         top_layout = QHBoxLayout()
 

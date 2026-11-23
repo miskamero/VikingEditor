@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QScrollArea, QFrame, QFormLayout,
+    QWidget, QVBoxLayout, QScrollArea, QFrame, QFormLayout,
     QTableWidget, QAbstractItemView, QComboBox, QListView,
 )
 
@@ -88,21 +88,13 @@ DETAIL_STYLE = """
 """.replace("@ASSETS@", (Path(__file__).resolve().parent.parent / "assets").as_posix())
 
 
-def detail_layout(widget, title, description, scroll=False):
+def detail_layout(widget, scroll=False):
     widget.setObjectName("detailPage")
     widget.setAttribute(Qt.WA_StyledBackground, True)
     widget.setStyleSheet(DETAIL_STYLE)
     outer = QVBoxLayout(widget)
     outer.setContentsMargins(20, 18, 20, 18)
     outer.setSpacing(8)
-    heading = QLabel(title)
-    heading.setObjectName("pageTitle")
-    outer.addWidget(heading)
-    subtitle = QLabel(description)
-    subtitle.setObjectName("pageDescription")
-    subtitle.setWordWrap(True)
-    outer.addWidget(subtitle)
-    outer.addSpacing(8)
     content = QWidget()
     content.setObjectName("detailContent")
     layout = QVBoxLayout(content)

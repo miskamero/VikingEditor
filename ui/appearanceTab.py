@@ -19,9 +19,7 @@ class AppearanceTab(QWidget):
         super().__init__()
         self.player_data = None
 
-        main_layout = detail_layout(
-            self, "Appearance", "Customize your Viking's model, hairstyle, and colors.", scroll=True
-        )
+        main_layout = detail_layout(self, scroll=True)
 
         # 1. Model & Style Group
         style_group = QGroupBox("Physical Customization")

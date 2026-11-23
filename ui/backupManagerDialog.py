@@ -45,7 +45,6 @@ class BackupManagerDialog(QDialog):
         )
 
         layout.addWidget(self.backup_list)
-        layout.addWidget(self.backup_list)
 
         self.backup_info = QLabel(
             "Select a backup to view its details."
@@ -65,10 +64,10 @@ class BackupManagerDialog(QDialog):
         button_layout = QHBoxLayout()
 
         self.open_button = QPushButton("Open Backup")
-        self.restore_button = QPushButton("Restore to current loaded save")
+        self.restore_button = QPushButton("Restore to Loaded Save")
         self.restore_to_valheim_button = QPushButton("Restore to Valheim Saves")
         self.delete_button = QPushButton("Delete")
-        self.delete_all_button = QPushButton("Delete All backups for char")
+        self.delete_all_button = QPushButton("Delete Character Backups")
         self.open_folder_button = QPushButton("Open Backups Folder")
         self.refresh_button = QPushButton("Refresh")
 
@@ -125,6 +124,7 @@ class BackupManagerDialog(QDialog):
             self.update_backup_info
         )
 
+        self.update_backup_info(None, None)
         self.load_backups()
 
     def open_backups_folder(self):
@@ -140,6 +140,8 @@ class BackupManagerDialog(QDialog):
         )
 
     def filter_backups(self, character_name):
+        self.backup_list.setCurrentRow(-1)
+        self.delete_all_button.setEnabled(bool(character_name) and character_name != "All Characters")
         for index in range(self.backup_list.count()):
             item = self.backup_list.item(index)
 
@@ -156,6 +158,7 @@ class BackupManagerDialog(QDialog):
             )
 
     def load_backups(self):
+        self.delete_all_button.setEnabled(False)
         self.backup_list.clear()
         self.character_filter.blockSignals(True)
         self.character_filter.clear()
@@ -232,6 +235,10 @@ class BackupManagerDialog(QDialog):
         return Path(item.data(256))
 
     def update_backup_info(self, current, previous):
+        selected = current is not None
+        for button in (self.open_button, self.restore_to_valheim_button, self.delete_button):
+            button.setEnabled(selected)
+        self.restore_button.setEnabled(bool(selected and self.main_window and self.main_window.current_fch))
         if current is None:
             self.backup_info.setText(
                 "Select a backup to view its details."
@@ -307,7 +314,7 @@ class BackupManagerDialog(QDialog):
         if self.main_window is None:
             return
 
-        if not self.main_window.load_backup_file(backup_path):
+        if not self.main_window.load_file(backup_path, backup=True):
             return
 
         self.accept()
@@ -438,25 +445,14 @@ class BackupManagerDialog(QDialog):
                     current_fch
                 )
 
-                character_name = (
-                    self.main_window.root_save.get(
-                        "character_name",
-                        "Viking"
-                    ).strip()
-                )
-
-                if not character_name:
-                    character_name = "Viking"
-
-                self.main_window.cleanup_old_backups(
-                    character_name
-                )
-
             # Restore the selected backup
             shutil.copy2(
                 backup_path,
                 current_fch
             )
+
+            if safety_backup is not None:
+                self.main_window.cleanup_old_backups(safety_backup.parent.name)
 
         except Exception as e:
             QMessageBox.critical(
@@ -486,7 +482,7 @@ class BackupManagerDialog(QDialog):
             f"{safety_message}"
         )
 
-        self.main_window.load_backup_file(current_fch)
+        self.main_window.load_file(str(current_fch))
         self.load_backups()
 
     def delete_backup(self):

@@ -19,9 +19,7 @@ class ProgressTab(QWidget):
     def __init__(self):
         super().__init__()
         self.player_data = {}
-        layout = detail_layout(
-            self, "Progress", "Discoveries and milestones from your Viking's journey.", scroll=True
-        )
+        layout = detail_layout(self, scroll=True)
         summary = QGridLayout()
         summary.setSpacing(12)
         self.count_labels = {}
