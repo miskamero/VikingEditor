@@ -99,6 +99,85 @@ class InventoryTests(QtTestCase):
         self.tab = self.widget(InventoryTab)
         self.tab.load_data(self.data)
 
+    def test_pockets_extend_the_grid_without_resizing_existing_slots(self):
+        self.tab.resize(820, 520)
+        self.tab.show()
+        self.app.processEvents()
+        scroll = self.tab.scroll_area
+        first = self.tab.slots[(0, 0)]
+        size = first.width()
+        before = deepcopy(self.data["inventory"])
+        self.assertGreater(size, self.tab.MIN_SLOT_SIZE)
+        self.assertLess(size, self.tab.MAX_SLOT_SIZE)
+        self.assertEqual(scroll.verticalScrollBar().maximum(), 0)
+        for control, rows in ((self.tab.wider_pockets_checkbox, 5), (self.tab.deeper_pockets_checkbox, 6)):
+            control.click()
+            self.app.processEvents()
+            self.assertEqual(set(self.tab.slots), {(x, y) for x in range(8) for y in range(rows)})
+            self.assertIs(self.tab.slots[(0, 0)], first)
+            self.assertTrue(all(slot.width() == slot.height() == size for slot in self.tab.slots.values()))
+            self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
+        self.assertEqual(self.data["inventory"], before)
+
+    def test_narrow_grid_scrolls_to_last_cell_and_keeps_controls_visible(self):
+        self.tab.deeper_pockets_checkbox.click()
+        self.tab.resize(500, 310)
+        self.tab.show()
+        self.app.processEvents()
+        scroll = self.tab.scroll_area
+        last = self.tab.slots[(7, 5)]
+        self.assertEqual(last.width(), self.tab.MIN_SLOT_SIZE)
+        for bar in (scroll.horizontalScrollBar(), scroll.verticalScrollBar()):
+            self.assertGreater(bar.maximum(), 0)
+            bar.setValue(bar.maximum())
+        self.assertTrue(scroll.viewport().rect().contains(last.mapTo(scroll.viewport(), last.rect().bottomRight())))
+        self.assertTrue(self.tab.wider_pockets_checkbox.isVisible())
+        checkbox = self.tab.deeper_pockets_checkbox
+        self.assertLess(checkbox.mapTo(self.tab, checkbox.rect().bottomLeft()).y(), scroll.y())
+        self.tab.resize(1440, 900)
+        self.app.processEvents()
+        self.assertEqual(last.width(), self.tab.MAX_SLOT_SIZE)
+        self.assertEqual(scroll.horizontalScrollBar().maximum(), 0)
+
+    def test_wide_grid_is_centered_and_keeps_the_same_slots_on_resize(self):
+        first = self.tab.slots[(0, 0)]
+        last = self.tab.slots[(7, 0)]
+        self.tab.resize(1600, 850)
+        self.tab.show()
+        self.app.processEvents()
+        left = first.mapTo(self.tab, first.rect().topLeft()).x()
+        right = last.mapTo(self.tab, last.rect().topRight()).x()
+        self.assertLess(abs(left - (self.tab.width() - right)), 24)
+        self.assertEqual(first.width(), self.tab.MAX_SLOT_SIZE)
+        # Applying a different item state must preserve the square dimensions,
+        # including when Qt repolishes a focused button.
+        first.setFocus()
+        first.set_item(item(prefab="SwordIron", equipped=True))
+        self.app.processEvents()
+        self.assertEqual(first.height(), first.width())
+        first.clear_item()
+        self.app.processEvents()
+        self.assertEqual(first.height(), first.width())
+        self.tab.resize(680, 500)
+        self.app.processEvents()
+        self.assertIs(first, self.tab.slots[(0, 0)])
+        self.assertEqual(first.width(), self.tab.MIN_SLOT_SIZE)
+
+    def test_long_name_elides_and_metadata_stays_below_it(self):
+        self.tab.resize(500, 310)
+        self.tab.show()
+        slot = self.tab.slots[(0, 0)]
+        slot.set_item(item(prefab="Unusually_Long_Unknown_Prefab", quality=3, stack=99, equipped=True))
+        self.app.processEvents()
+        self.assertTrue(slot.name_label.text().endswith("…"))
+        self.assertIn("Unusually Long Unknown Prefab", slot.toolTip())
+        self.assertEqual(slot.stack_label.text(), "×99")
+        self.assertEqual(slot.quality_label.text(), "3★")
+        for label in (slot.stack_label, slot.quality_label):
+            self.assertGreater(label.mapTo(slot, label.rect().topLeft()).y(), slot.name_label.geometry().bottom())
+        self.assertLess(slot.icon_label.geometry().bottom(), slot.name_label.geometry().top())
+
     def test_clear_cheated_flags_including_hidden_rows(self):
         self.question.return_value = QMessageBox.Yes
         self.tab.clear_cheated_button.click()
@@ -188,7 +267,7 @@ class InventoryTests(QtTestCase):
         self.assertIn("Spawned in with cheats: Yes", slot.toolTip())
         slot.clear_item()
         self.assertTrue(slot.cheated_label.isHidden())
-        self.assertEqual(slot.toolTip(), "Empty Slot")
+        self.assertIn("click to add", slot.toolTip())
 
     def test_dialog_cancel_does_not_mutate_item(self):
         value = self.data["inventory"][0]

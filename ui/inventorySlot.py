@@ -1,12 +1,16 @@
 from pathlib import Path
+import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from subscripts.itemDatabase import get_item_icon_path
 from PySide6.QtWidgets import (
-    QPushButton,
+    QToolButton,
     QLabel,
+    QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
+    QSizePolicy,
 )
 
 def format_item_name(prefab):
@@ -32,6 +36,8 @@ def format_item_name(prefab):
     if name.startswith("$item_"):
         name = name[6:]
 
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    name = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", name)
     name = name.replace("_", " ")
 
     return name.title()
@@ -131,362 +137,198 @@ def get_item_icon(prefab):
     )):
         return "material.png"
 
-    # misc
-    return "❓"
+    return "❔"
 
-def wrap_long_word(word, max_length=18):
-    if len(word) <= max_length:
-        return word
 
-    split_at = round(len(word) * 0.50)
+class InventorySlot(QToolButton):
+    # Match the dialog buttons without inheriting their minimum form-control height.
+    STYLE = """
+        QToolButton { padding: 0; background: white; color: #303438; border: 1px solid #d7dade; border-radius: 6px; }
+        QToolButton[slotState="empty"] {
+            background: #f8fafb; border: 1px solid #dfe4e5; color: transparent;
+        }
+        QToolButton[slotState="equipped"] { background: #eaf1e5; border-color: #a3b598; }
+        QToolButton:enabled:hover { background: #f0f5ec; border: 1px solid #a3b598; color: #45623a; }
+        QToolButton:enabled:focus { border: 2px solid #6d895b; color: #45623a; }
+        QToolButton:enabled:pressed { background: #e3eddc; }
+        QLabel#itemName { color: #303438; font-weight: 600; }
+        QLabel#quality, QLabel#stack { color: #536348; font-weight: 600; }
+        QLabel#missingIcon { color: #737c80; font-size: 20px; }
+        QLabel#equippedMark, QLabel#cheatedMark { border-radius: 3px; font-weight: 600; }
+        QLabel#equippedMark { color: white; background: #45623a; }
+        QLabel#cheatedMark { color: #793b31; background: #f3e4de; }
+    """
 
-    return (
-        word[:split_at] + "-\n" +
-        word[split_at:]
-    )
-
-class InventorySlot(QPushButton):
     def __init__(self, x, y, parent=None):
         super().__init__(parent)
-
         self.grid_x = x
         self.grid_y = y
         self.item_data = None
+        self._display_name = ""
+        self._icon = QPixmap()
+        self._icon_size = 0
 
-        self.setFixedSize(120, 120)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(self.STYLE)
 
-        # Item icon.
-        self.icon_label = QLabel()
-        self.icon_label.setAlignment(Qt.AlignCenter)
-        self.icon_label.setAttribute(
-            Qt.WA_TransparentForMouseEvents
-        )
+        self.icon_label = self.make_label("missingIcon")
+        self.name_label = self.make_label("itemName")
+        self.stack_label = self.make_label("stack", Qt.AlignLeft | Qt.AlignVCenter)
+        self.quality_label = self.make_label("quality", Qt.AlignRight | Qt.AlignVCenter)
+        self.equipped_label = self.make_label("equippedMark")
+        self.cheated_label = self.make_label("cheatedMark")
+        self.equipped_label.setText("✓")
+        self.cheated_label.setText("×")
+        for marker in (self.equipped_label, self.cheated_label):
+            marker.setFixedSize(14, 14)
+        self.icon_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
-        # Main item name.
-        self.name_label = QLabel()
-        self.name_label.setAlignment(
-            Qt.AlignCenter
-        )
-        self.name_label.setWordWrap(True)
-        self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
-        self.name_label.setMinimumHeight(36)
-        self.name_label.setMaximumHeight(48)
-        self.name_label.setAttribute(
-            Qt.WA_TransparentForMouseEvents
-        )
-
-        # Stack badge.
-        self.stack_label = QLabel()
-        self.stack_label.setAlignment(
-            Qt.AlignCenter
-        )
-        self.stack_label.setAttribute(
-            Qt.WA_TransparentForMouseEvents
-        )
-
-        # Quality badge.
-        self.quality_label = QLabel()
-        self.quality_label.setAlignment(
-            Qt.AlignCenter
-        )
-        self.quality_label.setAttribute(
-            Qt.WA_TransparentForMouseEvents
-        )
-
-        # Equipped badge.
-        self.equipped_label = QLabel()
-        self.equipped_label.setAlignment(
-            Qt.AlignCenter
-        )
-        self.equipped_label.setAttribute(
-            Qt.WA_TransparentForMouseEvents
-        )
-
-        # Main layout.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(1)
 
-        layout.addWidget(self.equipped_label, 0, Qt.AlignCenter)
-        
-        layout.addWidget(
-            self.icon_label,
-            0,
-            Qt.AlignCenter
-        )
+        image_layout = QGridLayout()
+        layout.addLayout(image_layout, 1)
+        image_layout.addWidget(self.icon_label, 0, 0, 1, 2)
+        image_layout.addWidget(self.equipped_label, 0, 0, Qt.AlignTop | Qt.AlignLeft)
+        image_layout.addWidget(self.cheated_label, 0, 1, Qt.AlignTop | Qt.AlignRight)
+        image_layout.setColumnStretch(0, 1)
+        image_layout.setColumnStretch(1, 1)
 
-        # Fixed-height area for the item name.
-        name_layout = QVBoxLayout()
-        name_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.name_label)
 
-        name_layout.addStretch()
-        name_layout.addWidget(
-            self.name_label,
-            0,
-            Qt.AlignCenter
-        )
-        name_layout.addStretch()
+        metadata_row = QWidget()
+        metadata_row.setFixedHeight(16)
+        metadata_row.setAttribute(Qt.WA_TransparentForMouseEvents)
+        metadata = QHBoxLayout(metadata_row)
+        metadata.setContentsMargins(0, 0, 0, 0)
+        metadata.setSpacing(4)
+        for label in (self.stack_label, self.quality_label):
+            metadata.addWidget(label, 1)
+        layout.addWidget(metadata_row)
 
-        layout.addLayout(name_layout, 1)
-
-        # Bottom badges.
-        bottom_layout = QHBoxLayout()
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-
-        bottom_layout.addWidget(self.stack_label)
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.quality_label)
-
-        layout.addLayout(bottom_layout)
-
-        # Overlay the corner so the marker does not shrink the item contents.
-        self.cheated_label = QLabel("\u00d7", self)
-        self.cheated_label.setGeometry(98, 3, 19, 19)
-        self.cheated_label.setAlignment(Qt.AlignCenter)
-        self.cheated_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.cheated_label.setStyleSheet("""
-            QLabel {
-                color: #ff6666;
-                background-color: #321515;
-                border: 1px solid #ff6666;
-                border-radius: 4px;
-                font-size: 16px;
-                font-weight: bold;
-            }
-        """)
-
+        self.set_slot_size(82)
         self.update_visuals()
+
+    def make_label(self, name, alignment=Qt.AlignCenter):
+        label = QLabel()
+        label.setObjectName(name)
+        label.setAlignment(alignment)
+        label.setTextFormat(Qt.PlainText)
+        label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        return label
+
+    def set_slot_size(self, size):
+        if self.width() == size and self.height() == size:
+            return
+        self.setFixedSize(size, size)
+        self.fit_contents()
+
+    def fit_contents(self):
+        if not self.item_data:
+            return
+
+        margins = self.layout().contentsMargins()
+        width = self.width() - margins.left() - margins.right()
+        metrics = self.name_label.fontMetrics()
+        name = self._display_name
+        if metrics.horizontalAdvance(name) > width:
+            # Break at a word boundary, or within a single long prefab token.
+            end = 1
+            while end < len(name) and metrics.horizontalAdvance(name[:end + 1]) <= width:
+                end += 1
+            split = name.rfind(" ", 1, end + 1)
+            if split < 0:
+                split = end
+            name = name[:split] + "\n" + metrics.elidedText(name[split:].lstrip(), Qt.ElideRight, width)
+        self.name_label.setFixedHeight(metrics.lineSpacing() * (1 + name.count("\n")) + 1)
+        self.name_label.setText(name)
+
+        stack = self.item_data.get("stack", 1)
+        quality = self.item_data.get("quality", 1)
+        # Give each value the space it needs up to half the row when both
+        # are long. Short values leave more room for the other label.
+        stack_text = f"×{stack:,}" if stack > 1 else ""
+        quality_text = f"{quality}★" if quality > 1 else ""
+        self.stack_label.setVisible(bool(stack_text))
+        self.quality_label.setVisible(bool(quality_text))
+        if stack_text and quality_text:
+            available = width - 4
+            stack_width = self.stack_label.fontMetrics().horizontalAdvance(stack_text)
+            quality_width = self.quality_label.fontMetrics().horizontalAdvance(quality_text)
+            stack_width = min(stack_width, available - min(quality_width, available // 2))
+            self.stack_label.setFixedWidth(stack_width)
+            self.quality_label.setFixedWidth(available - stack_width)
+        else:
+            self.stack_label.setFixedWidth(width)
+            self.quality_label.setFixedWidth(width)
+        for label, value in ((self.stack_label, stack_text), (self.quality_label, quality_text)):
+            label.setText(label.fontMetrics().elidedText(value, Qt.ElideRight, label.width()))
+
+        icon_size = max(16, self.height() - margins.top() - margins.bottom() - self.name_label.height() - 18)
+        if not self._icon.isNull() and self._icon_size != icon_size:
+            self._icon_size = icon_size
+            ratio = self.devicePixelRatioF()
+            pixmap = self._icon.scaled(round(icon_size * ratio), round(icon_size * ratio),
+                                       Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap.setDevicePixelRatio(ratio)
+            self.icon_label.setPixmap(pixmap)
 
     def set_item(self, item_data):
         self.item_data = item_data
         self.update_visuals()
 
     def clear_item(self):
-        self.item_data = None
-        self.update_visuals()
+        self.set_item(None)
 
     def update_visuals(self):
-        cheated = bool(self.item_data and self.item_data.get("cheated", False))
-        self.cheated_label.setVisible(cheated)
-        self.cheated_label.raise_()
+        item = self.item_data or {}
+        equipped = item.get("equipped", False)
+        cheated = item.get("cheated", False)
+        state = "equipped" if equipped else "occupied" if item else "empty"
+        if self.property("slotState") != state:
+            self.setProperty("slotState", state)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
 
-        if not self.item_data:
-            self.name_label.clear()
-            self.stack_label.clear()
-            self.quality_label.clear()
-            self.equipped_label.clear()
-            self.icon_label.clear()
-
-            self.setToolTip("Empty Slot")
-
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #151515;
-                    border: 1px dashed #303030;
-                    border-radius: 7px;
-                }
-
-                QPushButton:hover {
-                    background-color: #1d1d1d;
-                    border: 1px solid #444444;
-                }
-
-                QPushButton:pressed {
-                    background-color: #111111;
-                }
-            """)
-
+        self.setText("" if item else "+")
+        self.icon_label.setVisible(bool(item))
+        self.name_label.setVisible(bool(item))
+        self.equipped_label.setVisible(bool(equipped))
+        self.cheated_label.setVisible(bool(cheated))
+        if not item:
+            self._icon = QPixmap()
+            for label in (self.icon_label, self.name_label, self.stack_label, self.quality_label):
+                label.clear()
+                label.hide()
+            self.setToolTip("Empty slot — click to add an item.")
+            self.setAccessibleName(f"Empty slot, column {self.grid_x + 1}, row {self.grid_y + 1}")
+            self.setAccessibleDescription("")
             return
 
-        prefab = self.item_data.get(
-            "prefab",
-            "Unknown"
-        )
-
-        icon = get_item_icon(prefab)
-        cached_icon = get_item_icon_path(prefab, self.item_data.get("variant", 0))
-        cached_pixmap = QPixmap(str(cached_icon)) if cached_icon else QPixmap()
-
-        if not cached_pixmap.isNull():
-            self.icon_label.setPixmap(cached_pixmap.scaled(
-                44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation
-            ))
-        elif icon == "❓":
-            self.icon_label.setText(icon)
-            self.icon_label.setStyleSheet("""
-                QLabel {
-                    color: #888888;
-                    font-size: 24px;
-                    background: transparent;
-                }
-            """)
-        else:
-            icon_path = (
-                Path(__file__).resolve().parent.parent
-                / "assets"
-                / icon
-            )
-
-            pixmap = QPixmap(str(icon_path))
-
-            self.icon_label.setPixmap(
-                pixmap.scaled(
-                    44,
-                    44,
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-            )
-
-        self.icon_label.show()
-
-        stack = self.item_data.get(
-            "stack",
-            1
-        )
-
-        quality = self.item_data.get(
-            "quality",
-            1
-        )
-
-        equipped = self.item_data.get(
-            "equipped",
-            False
-        )
-
-        display_name = format_item_name(prefab)
-
-        display_name = " ".join(
-            wrap_long_word(word)
-            for word in display_name.split(" ")
-        )
-
-        self.name_label.setText(
-            display_name
-        )
-
-        self.name_label.setStyleSheet("""
-            QLabel {
-                color: #e6e6e6;
-                font-size: 11px;
-                font-weight: bold;
-                background: transparent;
-            }
-        """)
-
-        # Stack badge.
-        if stack > 1:
-            self.stack_label.setText(
-                f"×{stack}"
-            )
-
-            self.stack_label.setStyleSheet("""
-                QLabel {
-                    background-color: #111111;
-                    color: #ffffff;
-                    border: 1px solid #555555;
-                    border-radius: 4px;
-                    padding: 1px 5px;
-                    font-size: 10px;
-                    font-weight: bold;
-                }
-            """)
-
-            self.stack_label.show()
-
-        else:
-            self.stack_label.clear()
-            self.stack_label.hide()
-
-        # Quality badge.
-        if quality > 1:
-            self.quality_label.setText(
-                # "★" * quality
-                f"{quality}★"
-            )
-
-            self.quality_label.setStyleSheet("""
-                QLabel {
-                    color: #d8c46a;
-                    background: transparent;
-                    font-size: 10px;
-                    font-weight: bold;
-                }
-            """)
-
-            self.quality_label.show()
-
-        else:
-            self.quality_label.clear()
-            self.quality_label.hide()
-
-        # Equipped badge.
-        if equipped:
-            self.equipped_label.setText(
-                "EQUIPPED"
-            )
-
-            self.equipped_label.setStyleSheet("""
-                QLabel {
-                    background-color: #3a4728;
-                    color: #d9e8b5;
-                    border: 1px solid #657a3f;
-                    border-radius: 4px;
-                    padding: 2px 5px;
-                    font-size: 9px;
-                    font-weight: bold;
-                }
-            """)
-
-            self.equipped_label.show()
-
-        else:
-            self.equipped_label.clear()
-            self.equipped_label.hide()
-
+        prefab = item.get("prefab") or ""
+        self._display_name = format_item_name(prefab) if prefab else "Unknown item"
+        details = self._display_name if prefab else f"Unknown item (ID: {item.get('prefab_hash', '?')})"
+        cached_icon = get_item_icon_path(prefab, item.get("variant", 0))
+        self._icon = QPixmap(str(cached_icon)) if cached_icon else QPixmap()
+        if self._icon.isNull():
+            filename = get_item_icon(prefab)
+            if filename != "❔":
+                self._icon = QPixmap(str(Path(__file__).resolve().parent.parent / "assets" / filename))
+        self._icon_size = 0
+        if self._icon.isNull():
+            self.icon_label.setText("?")
+        self.fit_contents()
         self.setToolTip(
-            f"{display_name}\n"
-            f"Stack: {stack}\n"
-            f"Quality: {quality}\n"
+            f"{details}\n"
+            f"Stack: {item.get('stack', 1)}\n"
+            f"Quality: {item.get('quality', 1)}\n"
             f"Equipped: {'Yes' if equipped else 'No'}\n"
             f"Spawned in with cheats: {'Yes' if cheated else 'No'}"
         )
-
-        # Slot background.
-        if equipped:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #3a4728;
-                    border: 1px solid #657a3f;
-                    border-radius: 7px;
-                }
-
-                QPushButton:hover {
-                    background-color: #465633;
-                    border: 1px solid #829b52;
-                }
-
-                QPushButton:pressed {
-                    background-color: #303b22;
-                }
-            """)
-
-        else:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #252525;
-                    border: 1px solid #444444;
-                    border-radius: 7px;
-                }
-
-                QPushButton:hover {
-                    background-color: #303030;
-                    border: 1px solid #777777;
-                }
-
-                QPushButton:pressed {
-                    background-color: #1c1c1c;
-                }
-            """)
+        self.setAccessibleName(details)
+        self.setAccessibleDescription(self.toolTip())

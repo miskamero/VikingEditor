@@ -9,17 +9,20 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QDialog,
     QApplication,
-    QHBoxLayout,
+    QBoxLayout,
     QCheckBox,
     QPushButton,
     QGroupBox,
     QLabel,
-    QScrollArea
+    QScrollArea,
+    QSizePolicy,
+    QStyle,
 )
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 
 from ui.inventorySlot import InventorySlot
+from ui.tabStyle import DETAIL_STYLE
 from ui.itemEditDialog import ItemEditDialog
 from subscripts.equipmentSlots import eaq_equipment, eaq_inventory_rows, has_slot_mod_data
 from subscripts.itemValidation import validate_item
@@ -27,23 +30,49 @@ from subscripts.itemValidation import validate_item
 class InventoryTab(QWidget):
     GRID_WIDTH = 8
     DEFAULT_GRID_HEIGHT = 4
+    MIN_SLOT_SIZE = 82
+    MAX_SLOT_SIZE = 110
+    TOOLBAR_SPACING = 12
 
     def __init__(self):
         super().__init__()
         self.player_data = None
         self._eaq_rows = None
-        
-        outer_layout = QVBoxLayout(self)
+        self.slots = {}
+        self.equipment_slots = []
+        self._slot_size = self.MIN_SLOT_SIZE
+        self.setObjectName("detailPage")
+        self.setAttribute(Qt.WA_StyledBackground)
+        self.setStyleSheet(DETAIL_STYLE)
+
+        page = QBoxLayout(QBoxLayout.LeftToRight, self)
+        page.setContentsMargins(20, 18, 20, 18)
+        page.setSpacing(0)
+        column = QWidget()
+        page.addStretch()
+        page.addWidget(column, 1)
+        page.addStretch()
+        outer_layout = QVBoxLayout(column)
         outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(12)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QScrollArea.NoFrame)
         content = QWidget()
+        content.setObjectName("detailContent")
         self.main_layout = QVBoxLayout(content)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(8)
+        self.main_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.scroll_area.setWidget(content)
-        outer_layout.addWidget(self.scroll_area)
+        content.setAutoFillBackground(False)
+        self.scroll_area.viewport().setAutoFillBackground(False)
 
-        self.upgrade_layout = QHBoxLayout()
+        self.toolbar = QWidget()
+        self.toolbar.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.upgrade_layout = QBoxLayout(QBoxLayout.LeftToRight, self.toolbar)
+        self.upgrade_layout.setContentsMargins(0, 0, 0, 0)
+        self.upgrade_layout.setSpacing(self.TOOLBAR_SPACING)
 
         self.wider_pockets_checkbox = QCheckBox(
             "Wider Pockets"
@@ -61,8 +90,6 @@ class InventoryTab(QWidget):
             self.deeper_pockets_checkbox
         )
 
-        self.upgrade_layout.addStretch()
-
         self.clear_cheated_button = QPushButton("Clear All Cheated Flags")
         self.clear_cheated_button.setToolTip(
             "Remove the 'spawned in with cheats' flag from every inventory item."
@@ -70,19 +97,25 @@ class InventoryTab(QWidget):
         self.clear_cheated_button.setEnabled(False)
         self.clear_cheated_button.clicked.connect(self.clear_all_cheated_flags)
         self.upgrade_layout.addWidget(self.clear_cheated_button)
+        self.upgrade_layout.insertStretch(2)
+        for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button):
+            self.upgrade_layout.setAlignment(control, Qt.AlignLeft)
 
-        self.main_layout.addLayout(
-            self.upgrade_layout
-        )
+        outer_layout.addWidget(self.toolbar)
+        outer_layout.addWidget(self.scroll_area, 1)
 
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(6)
         self.main_layout.addLayout(self.grid_layout)
+        grid_width = self.GRID_WIDTH * self.MAX_SLOT_SIZE + (self.GRID_WIDTH - 1) * self.grid_layout.spacing()
+        column.setMaximumWidth(grid_width + self.scrollbar_gutter())
         
-        self.slots = {}
-        self.equipment_slots = []
         self.equipment_group = QGroupBox("Mod equipment")
+        # Eight equipped cells can span the same columns as the backpack.
+        self.equipment_group.setStyleSheet("QGroupBox { padding-left: 0; padding-right: 0; border-left: none; border-right: none; }")
         self.equipment_layout = QGridLayout(self.equipment_group)
+        self.equipment_layout.setContentsMargins(0, 6, 0, 6)
+        self.equipment_layout.setHorizontalSpacing(self.grid_layout.horizontalSpacing())
         self.main_layout.addWidget(self.equipment_group)
         self.equipment_group.hide()
 
@@ -94,6 +127,43 @@ class InventoryTab(QWidget):
         )
 
         self.init_empty_grid()
+        self.scroll_area.viewport().installEventFilter(self)
+        self.toolbar.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Resize:
+            if watched is self.scroll_area.viewport():
+                self.resize_slots()
+            elif watched is self.toolbar:
+                self.fit_toolbar()
+        return super().eventFilter(watched, event)
+
+    def scrollbar_gutter(self):
+        spacing = self.scroll_area.style().pixelMetric(QStyle.PM_ScrollView_ScrollBarSpacing, None, self.scroll_area)
+        return self.scroll_area.verticalScrollBar().sizeHint().width() + max(0, spacing)
+
+    def fit_toolbar(self):
+        controls = (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button)
+        widths = [control.sizeHint().width() for control in controls]
+        self.toolbar.setMinimumWidth(max(widths))
+        row_width = sum(widths) + self.TOOLBAR_SPACING * (len(widths) - 1)
+        if self.toolbar.width() < row_width:
+            self.upgrade_layout.setDirection(QBoxLayout.TopToBottom)
+            self.upgrade_layout.setSpacing(4)
+        else:
+            self.upgrade_layout.setDirection(QBoxLayout.LeftToRight)
+            self.upgrade_layout.setSpacing(self.TOOLBAR_SPACING)
+
+    def resize_slots(self):
+        # Reserve the scrollbar gutter even for short inventories. Row count
+        # can then change without affecting the sizing calculation.
+        width = self.scroll_area.width() - self.scrollbar_gutter()
+        width -= self.grid_layout.horizontalSpacing() * (self.GRID_WIDTH - 1)
+        size = max(self.MIN_SLOT_SIZE, min(self.MAX_SLOT_SIZE, width // self.GRID_WIDTH))
+        if size != self._slot_size:
+            self._slot_size = size
+            for slot in (*self.slots.values(), *self.equipment_slots):
+                slot.set_slot_size(size)
 
     def get_inventory_rows(self):
         if self.deeper_pockets_checkbox.isChecked():
@@ -119,30 +189,13 @@ class InventoryTab(QWidget):
                 self.wider_pockets_checkbox.setChecked(True)
                 self.wider_pockets_checkbox.blockSignals(False)
 
-            rows = 6
+        self.init_empty_grid(self.get_inventory_rows())
 
-        elif self.wider_pockets_checkbox.isChecked():
-            rows = 5
+    def init_empty_grid(self, rows=DEFAULT_GRID_HEIGHT, refresh=False):
+        items = (self.player_data or {}).get("inventory", [])
+        items_by_position = {(item.get("grid_x", 0), item.get("grid_y", 0)): item for item in items}
 
-        else:
-            rows = 4
-
-        self.init_empty_grid(rows)
-
-    def init_empty_grid(self, rows=4):
-        # Never expose EAQ's quick/equipment/custom region as ordinary cells,
-        # even if vanilla row markers disagree with the saved mod layout.
-        if self._eaq_rows is not None:
-            rows = min(rows, self._eaq_rows)
-        inventory_items = []
-
-        if self.player_data:
-            inventory_items = self.player_data.get(
-                "inventory",
-                []
-            ).copy()
-
-        # Keep existing slots alive saves memory and avoids flickering but we need to remove any slots that are now out of bounds
+        # Keep the widgets and focus for rows that remain in the inventory.
         for position, slot in list(self.slots.items()):
             if position[1] >= rows:
                 self.grid_layout.removeWidget(slot)
@@ -151,15 +204,13 @@ class InventoryTab(QWidget):
                 slot.customContextMenuRequested.disconnect()
                 slot.deleteLater()
                 del self.slots[position]
-            else:
-                slot.clear_item()
-                slot.setEnabled(True)
 
         for y in range(rows):
             for x in range(self.GRID_WIDTH):
                 if (x, y) in self.slots:
                     continue
                 slot = InventorySlot(x, y, self)
+                slot.set_slot_size(self._slot_size)
 
                 slot.setContextMenuPolicy(
                     Qt.CustomContextMenu
@@ -181,12 +232,12 @@ class InventoryTab(QWidget):
 
                 self.slots[(x, y)] = slot
 
-        for item in inventory_items:
-            x = item.get("grid_x", 0)
-            y = item.get("grid_y", 0)
-
-            if (x, y) in self.slots:
-                self.slots[(x, y)].set_item(item)
+        for position, slot in self.slots.items():
+            if refresh:
+                slot.setEnabled(True)
+            item = items_by_position.get(position)
+            if slot.isEnabledTo(self) and (refresh or slot.item_data is not item):
+                slot.set_item(item)
 
     def load_data(self, player_data, root_save=None):
         self.player_data = player_data
@@ -216,7 +267,7 @@ class InventoryTab(QWidget):
         self.wider_pockets_checkbox.blockSignals(False)
         self.deeper_pockets_checkbox.blockSignals(False)
 
-        self.update_inventory_grid()
+        self.init_empty_grid(self.get_inventory_rows(), refresh=True)
         self._loaded_pockets = (self.wider_pockets_checkbox.isChecked(), self.deeper_pockets_checkbox.isChecked())
         self._mod_storage = has_slot_mod_data(player_data)
         for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button):
@@ -250,6 +301,7 @@ class InventoryTab(QWidget):
             label.setAlignment(Qt.AlignCenter)
             self.equipment_layout.addWidget(label, 1, column)
             slot = InventorySlot(item["grid_x"], item["grid_y"], self)
+            slot.set_slot_size(self._slot_size)
             slot.set_item(item)
             self.equipment_slots.append(slot)
             self.equipment_layout.addWidget(slot, 2, column)
@@ -257,8 +309,6 @@ class InventoryTab(QWidget):
             editable = not validate_item(item, inventory_rows=item["grid_y"] + 1)
             slot.setEnabled(editable)
             if not editable:
-                if not item.get("prefab"):
-                    slot.name_label.setText(f"Unknown item\nID: {item.get('prefab_hash', '?')}")
                 slot.setToolTip(slot.toolTip() + "\nPreserved read-only: this item cannot be safely edited.")
             slot.clicked.connect(lambda checked=False, s=slot: self.edit_equipment_item(s))
             normal_slot = self.slots.get((item["grid_x"], item["grid_y"]))

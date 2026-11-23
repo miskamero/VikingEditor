@@ -7,14 +7,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QLabel
 
 from subscripts.itemDatabase import load_item_database, get_item_icon_path
-from ui.inventorySlot import format_item_name, get_item_icon
-
-
-def display_name(prefab):
-    words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", prefab)
-    words = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", words)
-    special = format_item_name(prefab)
-    return special if special != prefab.replace("_", " ").title() else words.replace("_", " ").title()
+from ui.inventorySlot import format_item_name as display_name, get_item_icon
 
 
 def search_key(text):
