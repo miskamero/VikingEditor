@@ -3,7 +3,7 @@ from pathlib import Path
 from subscripts.backupOwnership import (
     LEGACY_BACKUP, VALHEIM_SAVE_FOLDERS, managed_backups, owned_backup, plain_directory, remove_owned_backup,
 )
-from subscripts.fchUtil import atomic_write, read_file_snapshot, RevisionConflict, verified_payload
+from subscripts.fchUtil import atomic_write, parse_fch, read_file_snapshot, RevisionConflict, verified_payload
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -258,9 +258,16 @@ class BackupManagerDialog(QDialog):
             if backup is None:
                 raise FileNotFoundError(backup_path)
             verified_payload(backup.contents)
+            structural_error = None
+            try:
+                profile = parse_fch(backup.contents, require_supported_version=True)
+                if profile["player_data_hex"] is None:
+                    raise ValueError("This profile has no editable player data.")
+            except (ValueError, EOFError) as exc:
+                structural_error = str(exc)
             while True:
                 try:
-                    result = self.restore_to_destination(backup_path, backup, destination)
+                    result = self.restore_to_destination(backup_path, backup, destination, structural_error)
                 except RevisionConflict as exc:
                     if QMessageBox.warning(
                         self, "Restore Conflict", f"{exc}\n\nRestore to another destination?",
@@ -285,13 +292,15 @@ class BackupManagerDialog(QDialog):
 
         loaded = self.main_window.current_fch
         if loaded and Path(loaded).resolve() == destination.resolve():
-            if not self.main_window.load_file(str(destination), expected_revision=revision):
+            if structural_error or not self.main_window.load_file(str(destination), expected_revision=revision):
                 self.main_window.clear_document()
         summary = self.main_window.backup_summary(backups, destination, source=backup_path)
-        QMessageBox.information(self, "Backup Restored", f"Restored:\n{destination.absolute()}\n\n{summary}")
+        status = ("Archival bytes restored verbatim. Only the checksum was verified."
+                  if structural_error else "Checksum and supported save structure verified. Gameplay is unverified.")
+        QMessageBox.information(self, "Backup Restored", f"Restored:\n{destination.absolute()}\n\n{status}\n\n{summary}")
         self.load_backups()
 
-    def restore_to_destination(self, backup_path, backup, destination):
+    def restore_to_destination(self, backup_path, backup, destination, structural_error):
         snapshot = self.main_window.inspect_save_destination(destination)
         if snapshot is not None and backup_path.samefile(destination):
             raise ValueError("The selected backup is already the destination file.")
@@ -304,6 +313,12 @@ class BackupManagerDialog(QDialog):
             except (ValueError, EOFError) as exc:
                 title = "Damaged Destination"
                 message += f"\n\nThe destination appears damaged. {exc}"
+        if structural_error:
+            title = "Restore Archival Backup?"
+            message += (
+                "\n\nThe backup passed checksum verification. Its editable structure could not be validated. "
+                f"{structural_error}\n\nValheim may be unable to load this copy. Restore these bytes verbatim?"
+            )
         if QMessageBox.question(self, title, message, QMessageBox.Yes | QMessageBox.No,
                                 QMessageBox.No) != QMessageBox.Yes:
             return None

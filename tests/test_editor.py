@@ -150,16 +150,17 @@ class InventoryTests(QtTestCase):
 
         with patch("ui.inventoryTab.QApplication.clipboard") as clipboard:
             for x, prefab in enumerate(("CustomModBlade", ""), start=2):
-                value = item(prefab=prefab, prefab_hash=-1234, custom_data={"mod:key": "value"},
-                             grid_y=14, cheated_flags=192, world_level=9)
+                prefab_hash = playerDataUtil.get_stable_hash_code(prefab) if prefab else -1234
+                value = item(prefab=prefab, prefab_hash=prefab_hash, custom_data={"mod:key": "value"},
+                             grid_y=14, cheated_flags=192, world_level=9, extra_item_flags=4)
                 clipboard.return_value.text.return_value = json.dumps(
                     {"valheim_editor": "inventory_item", "item": value})
                 self.tab.paste_slot_item(self.tab.slots[x, 0])
                 self.assertEqual(self.data["inventory"][-1], dict(value, grid_x=x, grid_y=0))
                 decoded = playerDataUtil.unpack_player_data_hex(playerDataUtil.pack_player_data_hex(self.data))
                 result = decoded["inventory"][-1]
-                self.assertEqual(result["prefab_hash"], playerDataUtil.get_stable_hash_code(prefab) if prefab else -1234)
-                for key in ("custom_data", "cheated_flags", "world_level"):
+                self.assertEqual(result["prefab_hash"], prefab_hash)
+                for key in ("custom_data", "cheated_flags", "world_level", "extra_item_flags"):
                     self.assertEqual(result[key], value[key])
 
     def test_theme_switch_preserves_slots_scroll_and_open_item_editor(self):
@@ -682,7 +683,7 @@ class WorldsTests(QtTestCase):
         self.assertTrue(tab.world_list.item(0).isHidden())
         self.assertEqual(self.root, original)
 
-    def test_missing_raw_world_times_preserve_world_record_fallback(self):
+    def test_missing_raw_world_times_leave_uid_records_accessible(self):
         tab = self.widget(WorldsTab)
         self.root["worlds"] = [dict(world_id=42)]
         for raw in ({}, None, [], {"known_worlds": {}}, {"known_worlds": None},
@@ -690,9 +691,9 @@ class WorldsTests(QtTestCase):
             with self.subTest(raw=raw):
                 self.root["profiles"] = [raw, {"known_worlds": {"Midgard": 3600}}]
                 tab.load_data(self.root)
-                self.assertEqual(tab.known_worlds, {})
+                self.assertEqual(tab.named_times.get(0, {}), {})
                 self.assertEqual(tab.world_list.count(), 1)
-                self.assertEqual(tab.world_list.item(0).text(), "World 1")
+                self.assertEqual(tab.world_list.item(0).text(), "World UID 42")
                 self.assertEqual(tab.time_played_label.text(), "Time Played: Unknown")
                 self.assertEqual(tab.world_id_label.text(), "42")
 
@@ -704,9 +705,11 @@ class WorldsTests(QtTestCase):
         }
         self.root["profiles"][1]["known_worlds"] = {"Midgard": 3600}
         tab.load_data(self.root)
-        self.assertEqual(tab.known_worlds, {"Midgard": 0})
-        self.assertEqual(tab.world_list.count(), 1)
+        self.assertEqual(list(tab.named_times[0]), ["Midgard", "NaN", "Infinity"])
+        self.assertEqual(tab.world_list.count(), 3)
         self.assertEqual(tab.time_played_label.text(), "Time Played: 0s")
+        tab.world_list.setCurrentRow(1)
+        self.assertEqual(tab.time_played_label.text(), "Time Played: Unknown")
 
     def test_fallback_records_and_empty_copy_states(self):
         self.root["worlds"] = [dict(world_id=42, have_custom_spawn=True, spawn_point=[1, 2, 3])]
@@ -718,6 +721,59 @@ class WorldsTests(QtTestCase):
         tab.load_data({})
         self.assertFalse(tab.copy_spawn_button.isEnabled())
         self.assertFalse(tab.copy_world_id_button.isEnabled())
+
+    def test_named_durations_and_uid_locations_have_independent_selection_and_clipboard(self):
+        from tests.test_serialization_boundaries import profile_wire, stats_wire, world_wire
+        from subscripts.fchUtil import parse_fch
+
+        tab = self.widget(WorldsTab)
+        extremes = (2**63 - 1, -(2**63))
+        records = [world_wire(extremes[0], flags=(0, 1, 0), offset=100), world_wire(extremes[1], offset=200)]
+        cases = (([("Second", 7200), ("First", 90)], records[:1]),
+                 ([("First", 90)], records[::-1]), ([], records), ([("First", 90)], []))
+        with patch("ui.worldsTab.QApplication.clipboard") as clipboard:
+            for named, worlds in cases:
+                with self.subTest(names=len(named), worlds=len(worlds)):
+                    root = parse_fch(profile_wire(None, profiles=[stats_wire(named), stats_wire([("Bucket only", 12)])],
+                                                  worlds=worlds))
+                    tab.load_data(root)
+                    tab.collection.setCurrentIndex(0)
+                    self.assertEqual([tab.world_list.item(i).text() for i in range(tab.world_list.count())],
+                                     [name for name, _ in named])
+                    for i, (name, seconds) in enumerate(named):
+                        tab.world_list.setCurrentRow(i)
+                        self.assertEqual(tab.world_name_label.text(), name)
+                        self.assertEqual(tab.time_played_label.text(), "Time Played: " + ("2h" if seconds == 7200 else "1m 30s"))
+                        self.assertEqual(tab.world_id_label.text(), "-")
+                        self.assertFalse(tab.copy_world_id_button.isEnabled())
+                        self.assertFalse(tab.copy_home_button.isEnabled())
+                        clipboard.reset_mock()
+                        tab.copy_spawn_button.click()
+                        clipboard.return_value.setText.assert_not_called()
+                    tab.collection.setCurrentIndex(tab.collection.findData(1))
+                    self.assertEqual(tab.world_list.item(0).text(), "Bucket only")
+                    self.assertEqual(tab.world_id_label.text(), "-")
+                    tab.collection.setCurrentIndex(tab.collection.findData("records"))
+                    self.assertEqual(tab.world_list.count(), len(worlds))
+                    for i, record in enumerate(root["worlds"]):
+                        tab.world_list.setCurrentRow(i)
+                        uid = record["world_id"]
+                        self.assertEqual(tab.world_list.item(i).text(), f"World UID {uid}")
+                        self.assertEqual(tab.time_played_label.text(), "Time Played: Unknown")
+                        tab.copy_world_id_button.click()
+                        clipboard.return_value.setText.assert_called_with(str(uid))
+                        self.assertEqual(tab.copy_spawn_button.isEnabled(), uid == extremes[1])
+                        self.assertEqual(tab.copy_death_button.isEnabled(), uid == extremes[1])
+                        self.assertEqual(tab.copy_logout_button.isEnabled(), uid == extremes[0])
+                        if uid == extremes[1]:
+                            tab.copy_spawn_button.click()
+                            clipboard.return_value.setText.assert_called_with("X: 201    Y: 2    Z: 3")
+                        else:
+                            self.assertEqual(tab.spawn_label.text(), "Not set")
+                            tab.copy_logout_button.click()
+                            clipboard.return_value.setText.assert_called_with("X: 104    Y: 2    Z: 3")
+                    tab.world_search.setText("filtered")
+                    self.assertFalse(tab.copy_world_id_button.isEnabled())
 
 
 class SkillsTests(QtTestCase):

@@ -1,7 +1,9 @@
-import struct
-import io
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
+from subscripts.binaryCodec import (
+    BinaryReader as PlayerDataReader, BinaryWriter as PlayerDataWriter,
+    decode_hex, require_array, require_bool, require_int, require_object,
+)
 from subscripts.itemDatabase import load_item_database
 
 ITEM_HASH_TO_PREFAB = load_item_database()
@@ -55,211 +57,15 @@ def get_stable_hash_code(text):
         num + num2 * 1566083941
     )
 
-class PlayerDataReader:
-    def __init__(self, data: bytes):
-        self.stream = io.BytesIO(data)
-
-    def read_bytes(self, n: int) -> bytes:
-        data = self.stream.read(n)
-
-        if len(data) != n:
-            raise EOFError(
-                f"Unexpected end of stream: "
-                f"expected {n} bytes, got {len(data)}"
-            )
-
-        return data
-
-    def read_byte(self) -> int:
-        return self.read_bytes(1)[0]
-
-    def read_ushort(self) -> int:
-        return struct.unpack("<H", self.read_bytes(2))[0]
-
-    def read_int32(self) -> int:
-        return struct.unpack("<i", self.read_bytes(4))[0]
-
-    def read_float(self) -> float:
-        return struct.unpack("<f", self.read_bytes(4))[0]
-
-    def read_long(self) -> int:
-        return struct.unpack("<q", self.read_bytes(8))[0]
-
-    def read_bool(self) -> bool:
-        return self.read_bytes(1)[0] != 0
-
-    def read_vector3(self) -> list:
-        return list(
-            struct.unpack(
-                "<fff",
-                self.read_bytes(12)
-            )
-        )
-
-    def read_7bit_encoded_int(self) -> int:
-        value = 0
-        shift = 0
-
-        while True:
-            byte = self.read_byte()
-
-            value |= (byte & 0x7F) << shift
-
-            if (byte & 0x80) == 0:
-                break
-
-            shift += 7
-
-        return value
-
-    def read_string(self) -> str:
-        length = self.read_7bit_encoded_int()
-
-        if length == 0:
-            return ""
-
-        return self.read_bytes(length).decode(
-            "utf-8",
-            errors="ignore"
-        )
-
-    def read_byte_array(self) -> bytes:
-        length = self.read_int32()
-
-        if length < 0:
-            raise ValueError(
-                f"Invalid byte array length: {length}"
-            )
-
-        return self.read_bytes(length)
-
-    def read_num_items(self) -> int:
-        """
-        Valheim/ZPackage variable-size item count.
-
-        < 128:
-            one byte
-
-        >= 128:
-            two bytes
-        """
-        first = self.read_byte()
-
-        if (first & 0x80) == 0:
-            return first
-
-        return ((first & 0x7F) << 8) | self.read_byte()
+def read_string_list(pkg, field):
+    return [pkg.read_string() for _ in range(pkg.read_count(field, 1))]
 
 
-class PlayerDataWriter:
-    def __init__(self):
-        self.stream = io.BytesIO()
+def read_dictionary(pkg, field, key, value, minimum_item_bytes, *, game_rejects=False):
+    return pkg.read_dictionary(
+        pkg.read_count(field, minimum_item_bytes), key, value, field, game_rejects=game_rejects,
+    )
 
-    def get_bytes(self) -> bytes:
-        return self.stream.getvalue()
-
-    def write_byte(self, val: int):
-        self.stream.write(struct.pack("<B", val))
-
-    def write_ushort(self, val: int):
-        self.stream.write(struct.pack("<H", val))
-
-    def write_int32(self, val: int):
-        self.stream.write(struct.pack("<i", val))
-
-    def write_float(self, val: float):
-        self.stream.write(
-            struct.pack("<f", float(val))
-        )
-
-    def write_long(self, val: int):
-        self.stream.write(struct.pack("<q", val))
-
-    def write_bool(self, val: bool):
-        self.stream.write(
-            b"\x01" if val else b"\x00"
-        )
-
-    def write_7bit_encoded_int(self, value: int):
-        while value >= 0x80:
-            self.stream.write(
-                bytes([(value & 0x7F) | 0x80])
-            )
-            value >>= 7
-
-        self.stream.write(bytes([value]))
-
-    def write_string(self, val: str):
-        encoded = val.encode("utf-8")
-
-        self.write_7bit_encoded_int(len(encoded))
-        self.stream.write(encoded)
-
-    def write_byte_array(self, data: bytes):
-        self.write_int32(len(data))
-        self.stream.write(data)
-
-    def write_num_items(self, value: int):
-        if value < 128:
-            self.write_byte(value)
-        else:
-            self.write_byte((value >> 8) | 0x80)
-            self.write_byte(value & 0xFF)
-
-
-# Helpers! Klinoff needs to clean this up later. Nöfnöf.
-# TODO: clean up these helpers and maybe even move them to a better location. They are not really part of the core reader/writer classes?
-
-def read_string_list(pkg: PlayerDataReader) -> list:
-    count = pkg.read_int32()
-
-    if count < 0:
-        raise ValueError(
-            f"Invalid list count: {count}"
-        )
-
-    return [
-        pkg.read_string()
-        for _ in range(count)
-    ]
-
-
-def read_string_int_dictionary(pkg: PlayerDataReader) -> dict:
-    count = pkg.read_int32()
-
-    if count < 0:
-        raise ValueError(
-            f"Invalid dictionary count: {count}"
-        )
-
-    return {
-        pkg.read_string(): pkg.read_int32()
-        for _ in range(count)
-    }
-
-
-def read_string_string_dictionary(pkg: PlayerDataReader) -> dict:
-    count = pkg.read_int32()
-
-    if count < 0:
-        raise ValueError(
-            f"Invalid dictionary count: {count}"
-        )
-
-    return {
-        pkg.read_string(): pkg.read_string()
-        for _ in range(count)
-    }
-
-
-def read_int_int_dictionary(pkg: PlayerDataReader) -> dict:
-    count = pkg.read_int32()
-    if count < 0:
-        raise ValueError(f"Invalid dictionary count: {count}")
-    return {pkg.read_int32(): pkg.read_int32() for _ in range(count)}
-
-
-# Player.Save / Player.Load
 
 def item_is_cheated(item, inventory_version):
     """Return the effective saved flag. Legacy bytes have no effective flag."""
@@ -267,17 +73,12 @@ def item_is_cheated(item, inventory_version):
 
 
 def unpack_player_data_hex(hex_string: str) -> dict:
-    """
-    parses the nested Player.Save payload from a hex string into a Python dictionary.
-
-    Supports player versions 33/34 and inventory versions 109/110.
-    """
-
-    if not hex_string:
+    if hex_string is None:
         return {}
+    return parse_player_data(decode_hex(hex_string, "player_data_hex"))
 
-    raw_bytes = bytes.fromhex(hex_string)
-
+def parse_player_data(raw_bytes: bytes) -> dict:
+    """Decode Player 33/34 with Inventory 109/110, retaining opaque bytes."""
     pkg = PlayerDataReader(raw_bytes)
 
     out = {}
@@ -310,6 +111,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
         raise ValueError(f"Unsupported inventory version: {out['inventory_version']}")
 
     item_count = pkg.read_ushort()
+    pkg.check_remaining(item_count * 9, "inventory records")
 
     out["inventory"] = []
 
@@ -377,10 +179,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
             item["prefab_hash"] = 0
 
         # keep the old field for now so the existing data model doesn't immediately break
-        item["prefab"] = ITEM_HASH_TO_PREFAB.get(
-            item["prefab_hash"],
-            ""
-        )
+        item["prefab"] = ITEM_HASH_TO_PREFAB.get(item["prefab_hash"], "") if item["prefab_hash"] else ""
 
         # bit 7 = custom data present
         if flags & 128:
@@ -388,13 +187,17 @@ def unpack_player_data_hex(hex_string: str) -> dict:
         else:
             custom_count = 0
 
-        item["custom_data"] = {}
-
-        for _ in range(custom_count):
-            key = pkg.read_string()
-            value = pkg.read_string()
-
-            item["custom_data"][key] = value
+        pkg.check_remaining(custom_count * 2, "item custom_data")
+        item["custom_data"] = pkg.read_dictionary(
+            custom_count, pkg.read_string, pkg.read_string, "item custom_data",
+        )
+        # Remember the optional flags whose payload matches the usual absent-field default.
+        extra_flags = sum(bit for bit, key, absent in (
+            (4, "quality", 1), (8, "stack", 1), (16, "variant", 0),
+            (32, "crafter_id", 0), (64, "prefab_hash", 0), (128, "custom_data", {}),
+        ) if flags & bit and item[key] == absent)
+        if extra_flags:
+            item["extra_item_flags"] = extra_flags
 
         # Inventory 109 consumes this byte without interpreting any bits.
         item["cheated_flags"] = pkg.read_byte()
@@ -404,14 +207,13 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
 
     # recipes, stations, materials, tutorials, uniques, trophies, biomes, known texts
-    out["known_recipes"] = read_string_list(pkg)
-    out["known_stations"] = read_string_int_dictionary(pkg)
-    out["known_material"] = read_string_list(pkg)
-    out["shown_tutorials"] = read_string_list(pkg)
-    out["uniques"] = read_string_list(pkg)
-    out["trophies"] = read_string_list(pkg)
-    out["known_biomes"] = read_string_list(pkg)
-    out["known_texts"] = read_string_string_dictionary(pkg)
+    out["known_recipes"] = read_string_list(pkg, "known_recipes")
+    out["known_stations"] = read_dictionary(
+        pkg, "known_stations", pkg.read_string, pkg.read_int32, 5, game_rejects=True,
+    )
+    for field in ("known_material", "shown_tutorials", "uniques", "trophies", "known_biomes"):
+        out[field] = read_string_list(pkg, field)
+    out["known_texts"] = read_dictionary(pkg, "known_texts", pkg.read_string, pkg.read_string, 2)
 
     # Appearance
 
@@ -425,12 +227,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
     # foods
 
-    food_count = pkg.read_int32()
-
-    if food_count < 0:
-        raise ValueError(
-            f"Invalid food count: {food_count}"
-        )
+    food_count = pkg.read_count("food", 5)
 
     out["foods"] = []
 
@@ -453,12 +250,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
     if out["skill_version"] != 2:
         raise ValueError(f"Unsupported skill data version: {out['skill_version']}")
 
-    skill_count = pkg.read_int32()
-
-    if skill_count < 0:
-        raise ValueError(
-            f"Invalid skill count: {skill_count}"
-        )
+    skill_count = pkg.read_count("skill", 12)
 
     out["skills"] = []
 
@@ -469,7 +261,7 @@ def unpack_player_data_hex(hex_string: str) -> dict:
             "xp": pkg.read_float()
         })
 
-    out["custom_data"] = read_string_string_dictionary(pkg)
+    out["custom_data"] = read_dictionary(pkg, "player custom_data", pkg.read_string, pkg.read_string, 2)
 
     # Final stats
     out["stamina"] = pkg.read_float()
@@ -487,15 +279,15 @@ def unpack_player_data_hex(hex_string: str) -> dict:
     #
     # ZPackage byte[] = int32 length + bytes
 
-    build_ui_data = pkg.read_byte_array()
+    build_ui_data = pkg.read_byte_array("build_ui_data")
 
     out["build_ui_data_hex"] = build_ui_data.hex()
 
     # Player.Save appends these in v34, in this order. Player.Load skips both
     # for v33. Keep the signed keys/values, including seeds we cannot interpret.
     if out["version"] >= 34:
-        out["pseudo_drop_counters"] = read_int_int_dictionary(pkg)
-        out["item_upgrade_seeds"] = read_int_int_dictionary(pkg)
+        for field in ("pseudo_drop_counters", "item_upgrade_seeds"):
+            out[field] = read_dictionary(pkg, field, pkg.read_int32, pkg.read_int32, 8)
 
     # Retain opaque extensions to supported layouts instead of dropping bytes.
     trailing_data = pkg.stream.read()
@@ -504,402 +296,179 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
     return out
 
+def write_item(pkg, item, inventory_version, field):
+    item = require_object(item, field)
+    durability = item.get("durability", 100.0)
+    try:
+        if isinstance(durability, bool) or not isinstance(durability, (int, float)):
+            raise ValueError
+        scaled = Decimal(str(durability)) * 100
+        # Keep stored hundredths exact. Explicit fractional edits use the
+        # integer-hundredths quantization from ItemData.Save.
+        if not scaled.is_finite() or not -(2**31) <= scaled <= 2**31 - 1:
+            raise ValueError
+    except (ValueError, InvalidOperation) as exc:
+        raise ValueError(f"{field}.durability must fit in signed 32-bit hundredths.") from exc
+    pkg.write_int32(int(scaled), f"{field}.durability")
+    for key in ("grid_x", "grid_y", "world_level"):
+        pkg.write_byte(item.get(key, 0), f"{field}.{key}")
+
+    flags = require_int(item.get("extra_item_flags", 0), 0, 255, f"{field}.extra_item_flags")
+    if flags & 3:
+        raise ValueError(f"{field}.extra_item_flags may contain only optional-field bits 2 through 7.")
+    if require_bool(item.get("picked_up", False), f"{field}.picked_up"):
+        flags |= 1
+    if require_bool(item.get("equipped", False), f"{field}.equipped"):
+        flags |= 2
+
+    quality = require_int(item.get("quality", 1), 0, 65535, f"{field}.quality")
+    stack = require_int(item.get("stack", 1), 0, 65535, f"{field}.stack")
+    variant = require_int(item.get("variant", 0), -(2**31), 2**31 - 1, f"{field}.variant")
+    crafter = require_int(item.get("crafter_id", 0), -(2**63), 2**63 - 1, f"{field}.crafter_id")
+    crafter_name = item.get("crafter_name", "")
+    if not isinstance(crafter_name, str):
+        raise ValueError(f"{field}.crafter_name must be a string.")
+    if crafter_name and not (crafter or flags & 32):
+        raise ValueError(f"{field}.crafter_name requires a crafter ID or an explicitly present crafter field.")
+
+    prefab = item.get("prefab", "")
+    prefab_hash = require_int(item.get("prefab_hash", 0), -(2**31), 2**31 - 1, f"{field}.prefab_hash")
+    if not isinstance(prefab, str) or "\x00" in prefab:
+        raise ValueError(f"{field}.prefab must be a string without null characters.")
+    if prefab:
+        try:
+            expected_hash = get_stable_hash_code(prefab)
+        except UnicodeError as exc:
+            raise ValueError(f"{field}.prefab contains invalid Unicode.") from exc
+        if "prefab_hash" in item and prefab_hash != expected_hash:
+            raise ValueError(f"{field}.prefab and prefab_hash disagree; supply matching values or remove one.")
+        prefab_hash = expected_hash
+    custom = require_object(item.get("custom_data", {}), f"{field}.custom_data")
+    require_int(len(custom), 0, 32767, f"{field}.custom_data count")
+    for bit, present in (
+        (4, quality != 1), (8, stack != 1), (16, variant != 0),
+        (32, crafter != 0), (64, prefab_hash != 0), (128, bool(custom)),
+    ):
+        if present:
+            flags |= bit
+
+    pkg.write_byte(flags)
+    if flags & 4:
+        pkg.write_ushort(quality)
+    if flags & 8:
+        pkg.write_ushort(stack)
+    if flags & 16:
+        pkg.write_int32(variant)
+    if flags & 32:
+        pkg.write_long(crafter)
+        pkg.write_string(crafter_name, f"{field}.crafter_name")
+    if flags & 64:
+        pkg.write_int32(prefab_hash)
+    if flags & 128:
+        pkg.write_num_items(len(custom))
+        for key, value in custom.items():
+            pkg.write_string(key, f"{field}.custom_data key")
+            pkg.write_string(value, f"{field}.custom_data[{key!r}]")
+
+    # Inventory 109's entire byte is opaque. In 110 only bit 0 is editable.
+    extra = require_int(item.get("cheated_flags", 0), 0, 255, f"{field}.cheated_flags")
+    if "cheated" in item:
+        require_bool(item["cheated"], f"{field}.cheated")
+    if inventory_version == 110:
+        extra = (extra & ~1) | item_is_cheated(item, inventory_version)
+    pkg.write_byte(extra)
+
+
+def write_counter_dictionary(pkg, value, field):
+    counters = require_object(value, field)
+    keys = {}
+    for key, value in counters.items():
+        number = key
+        if isinstance(key, str):
+            try:
+                number = int(key)
+            except ValueError as exc:
+                raise ValueError(f"{field} key {key!r} must be a signed 32-bit integer.") from exc
+            if str(number) != key:
+                raise ValueError(f"{field} key {key!r} must use its canonical decimal spelling.")
+        require_int(number, -(2**31), 2**31 - 1, f"{field} key")
+        if number in keys:
+            raise ValueError(f"Duplicate key {number} in {field}.")
+        keys[number] = value
+    pkg.write_dictionary(keys, pkg.write_int32, pkg.write_int32, field)
+
+
 def pack_player_data_hex(data: dict) -> str:
-    """
-    Serializes supported Player.Save payloads, preserving their versions.
-
-    Current format:
-        Player version: 33 or 34
-        Inventory version: 109 or 110
-        Inventory count: ushort
-        Item format: compact flags + optional fields
-    """
-
-    # Missing versions retain the historical defaults for imported editor JSON.
+    """Serialize the supported Player layouts, preserving versions and opaque data."""
+    require_object(data, "player_data")
     version = data.get("version", 33)
     inventory_version = data.get("inventory_version", 109)
-    if version not in (33, 34):
+    skill_version = data.get("skill_version", 2)
+    if type(version) is not int or version not in (33, 34):
         raise ValueError(f"Unsupported player data version: {version}")
-    if inventory_version not in (109, 110):
+    if type(inventory_version) is not int or inventory_version not in (109, 110):
         raise ValueError(f"Unsupported inventory version: {inventory_version}")
-    if data.get("skill_version", 2) != 2:
-        raise ValueError(f"Unsupported skill data version: {data['skill_version']}")
+    if type(skill_version) is not int or skill_version != 2:
+        raise ValueError(f"Unsupported skill data version: {skill_version}")
     if version == 33 and (data.get("pseudo_drop_counters") or data.get("item_upgrade_seeds")):
         raise ValueError("Player version 33 cannot store version 34 counters or upgrade seeds")
 
     pkg = PlayerDataWriter()
-
-    # Player version
     pkg.write_int32(version)
+    for field, default in (("max_health", 25.0), ("health", 25.0), ("max_stamina", 50.0),
+                           ("time_since_death", 0.0)):
+        pkg.write_float(data.get(field, default), field)
+    pkg.write_string(data.get("guardian_power", ""), "guardian_power")
+    pkg.write_float(data.get("guardian_power_cooldown", 0.0), "guardian_power_cooldown")
 
-    # Core stats
-    pkg.write_float(
-        data.get("max_health", 25.0)
-    )
-
-    pkg.write_float(
-        data.get("health", 25.0)
-    )
-
-    pkg.write_float(
-        data.get("max_stamina", 50.0)
-    )
-
-    pkg.write_float(
-        data.get("time_since_death", 0.0)
-    )
-
-    pkg.write_string(
-        data.get("guardian_power", "")
-    )
-
-    pkg.write_float(
-        data.get("guardian_power_cooldown", 0.0)
-    )
-
-    # Inventory
     pkg.write_int32(inventory_version)
-
-    inventory = data.get("inventory", [])
-
-    pkg.write_ushort(len(inventory))
-
-    for item in inventory:
-
-        durability = item.get(
-            "durability",
-            100.0
-        )
-
-        # Truncate sub-cent edits as before, in decimal so 0.29 encodes as 29.
-        durability_raw = int(Decimal(str(durability)) * 100)
-
-        pkg.write_int32(durability_raw)
-
-        # Grid position + world level
-        pkg.write_byte(
-            item.get("grid_x", 0)
-        )
-
-        pkg.write_byte(
-            item.get("grid_y", 0)
-        )
-
-        pkg.write_byte(
-            item.get("world_level", 0)
-        )
-
-        # Build item flags
-        flags = 0
-
-        if item.get("picked_up", False):
-            flags |= 1
-
-        if item.get("equipped", False):
-            flags |= 2
-
-        if item.get("quality", 1) != 1:
-            flags |= 4
-
-        if item.get("stack", 1) != 1:
-            flags |= 8
-
-        if item.get("variant", 0) != 0:
-            flags |= 16
-
-        crafter_id = item.get(
-            "crafter_id",
-            0
-        )
-
-        if crafter_id != 0:
-            flags |= 32
-
-        # The current format stores the prefab as a stable hash.
-        prefab = item.get(
-            "prefab",
-            ""
-        )
-
-        prefab_hash = item.get(
-            "prefab_hash",
-            0
-        )
-
-        if prefab:
-            prefab_hash = get_stable_hash_code(
-                prefab
-            )
-
-        if prefab_hash != 0:
-            flags |= 64
-
-        custom_data = item.get(
-            "custom_data",
-            {}
-        )
-
-        if custom_data:
-            flags |= 128
-
-        pkg.write_byte(flags)
-
-        # Optional quality
-        if flags & 4:
-            pkg.write_ushort(
-                item.get("quality", 1)
-            )
-
-        # Optional stack
-        if flags & 8:
-            pkg.write_ushort(
-                item.get("stack", 1)
-            )
-
-        # Optional variant
-        if flags & 16:
-            pkg.write_int32(
-                item.get("variant", 0)
-            )
-
-        # Optional crafter
-        if flags & 32:
-            pkg.write_long(crafter_id)
-
-            pkg.write_string(
-                item.get(
-                    "crafter_name",
-                    ""
-                )
-            )
-
-        # Optional prefab hash
-        if flags & 64:
-            pkg.write_int32(prefab_hash)
-
-        # Optional custom data
-        if flags & 128:
-            pkg.write_num_items(
-                len(custom_data)
-            )
-
-            for k, v in custom_data.items():
-                pkg.write_string(k)
-                pkg.write_string(v)
-
-        # Preserve all of the v109 byte. Only v110 applies explicit bit 0 edits.
-        cheated_flags = item.get("cheated_flags", 0)
-        if inventory_version == 110:
-            cheated_flags = (cheated_flags & ~1) | item_is_cheated(item, inventory_version)
-
-        pkg.write_byte(cheated_flags)
-
-    # Known recipes
-    recipes = data.get(
-        "known_recipes",
-        []
-    )
-
-    pkg.write_int32(len(recipes))
-
-    for recipe in recipes:
-        pkg.write_string(recipe)
-
-    # Known stations
-    stations = data.get(
-        "known_stations",
-        {}
-    )
-
-    pkg.write_int32(len(stations))
-
-    for k, v in stations.items():
-        pkg.write_string(k)
-        pkg.write_int32(v)
-
-    # Known materials
-    materials = data.get(
-        "known_material",
-        []
-    )
-
-    pkg.write_int32(len(materials))
-
-    for material in materials:
-        pkg.write_string(material)
-
-    # Shown tutorials
-    tutorials = data.get(
-        "shown_tutorials",
-        []
-    )
-
-    pkg.write_int32(len(tutorials))
-
-    for tutorial in tutorials:
-        pkg.write_string(tutorial)
-
-    # Uniques
-    uniques = data.get(
-        "uniques",
-        []
-    )
-
-    pkg.write_int32(len(uniques))
-
-    for unique in uniques:
-        pkg.write_string(unique)
-
-    # Trophies
-    trophies = data.get(
-        "trophies",
-        []
-    )
-
-    pkg.write_int32(len(trophies))
-
-    for trophy in trophies:
-        pkg.write_string(trophy)
-
-    # Known biomes
-    # Current Valheim format uses strings here.
-    biomes = data.get(
-        "known_biomes",
-        []
-    )
-
-    pkg.write_int32(len(biomes))
-
-    for biome in biomes:
-        pkg.write_string(biome)
-
-    # Known texts
-    texts = data.get(
-        "known_texts",
-        {}
-    )
-
-    pkg.write_int32(len(texts))
-
-    for k, v in texts.items():
-        pkg.write_string(k)
-        pkg.write_string(v)
-
-    # Appearance
-    pkg.write_string(
-        data.get("beard", "")
-    )
-
-    pkg.write_string(
-        data.get("hair", "")
-    )
-
-    for x in data.get(
-        "skin_color",
-        [1.0, 1.0, 1.0]
-    ):
-        pkg.write_float(x)
-
-    for x in data.get(
-        "hair_color",
-        [1.0, 1.0, 1.0]
-    ):
-        pkg.write_float(x)
-
-    pkg.write_int32(
-        data.get("model_index", 0)
-    )
-
-    # Foods
-    foods = data.get(
-        "foods",
-        []
-    )
-
-    pkg.write_int32(len(foods))
-
-    for food in foods:
-        pkg.write_string(
-            food.get("name", "")
-        )
-
-        pkg.write_float(
-            food.get("time", 0.0)
-        )
-
-    # Skills
-    pkg.write_int32(2)
-
-    skills = data.get(
-        "skills",
-        []
-    )
-
-    pkg.write_int32(len(skills))
-
-    for skill in skills:
-        pkg.write_int32(
-            skill.get("id", 0)
-        )
-
-        pkg.write_float(
-            skill.get("level", 1.0)
-        )
-
-        pkg.write_float(
-            skill.get("xp", 0.0)
-        )
-
-    # Custom player data
-    c_data = data.get(
-        "custom_data",
-        {}
-    )
-
-    pkg.write_int32(len(c_data))
-
-    for k, v in c_data.items():
-        pkg.write_string(k)
-        pkg.write_string(v)
-
-    # Final stamina/eitr values
-    pkg.write_float(
-        data.get("stamina", 50.0)
-    )
-
-    pkg.write_float(
-        data.get("max_eitr", 0.0)
-    )
-
-    pkg.write_float(
-        data.get("eitr", 0.0)
-    )
-
-    build_ui_hex = data.get(
-        "build_ui_data_hex",
-        ""
-    )
-
-    if build_ui_hex:
-        build_ui_data = bytes.fromhex(
-            build_ui_hex
-        )
-    else:
-        build_ui_data = b""
-
-    pkg.write_byte_array(
-        build_ui_data
-    )
-
-    if version >= 34:
-        for field in ("pseudo_drop_counters", "item_upgrade_seeds"):
-            values = data.get(field, {})
-            pkg.write_int32(len(values))
-            for key, value in values.items():
-                # JSON object keys become strings on export/import.
-                pkg.write_int32(int(key))
-                pkg.write_int32(value)
-
-    pkg.stream.write(bytes.fromhex(data.get("trailing_data_hex", "")))
-
+    inventory = require_array(data.get("inventory", []), "inventory")
+    pkg.write_ushort(len(inventory), "inventory count")
+    for index, item in enumerate(inventory):
+        write_item(pkg, item, inventory_version, f"inventory[{index}]")
+
+    for field in ("known_recipes", "known_stations", "known_material", "shown_tutorials",
+                  "uniques", "trophies", "known_biomes", "known_texts"):
+        if field in ("known_stations", "known_texts"):
+            write_value = pkg.write_int32 if field == "known_stations" else pkg.write_string
+            pkg.write_dictionary(data.get(field, {}), pkg.write_string, write_value, field)
+        else:
+            entries = require_array(data.get(field, []), field)
+            pkg.write_int32(len(entries), f"{field} count")
+            for index, entry in enumerate(entries):
+                pkg.write_string(entry, f"{field}[{index}]")
+
+    for field in ("beard", "hair"):
+        pkg.write_string(data.get(field, ""), field)
+    for field in ("skin_color", "hair_color"):
+        pkg.write_vector3(data.get(field, [1.0, 1.0, 1.0]), field)
+    pkg.write_int32(data.get("model_index", 0), "model_index")
+
+    foods = require_array(data.get("foods", []), "foods")
+    pkg.write_int32(len(foods), "foods count")
+    for index, food in enumerate(foods):
+        require_object(food, f"foods[{index}]")
+        pkg.write_string(food.get("name", ""), f"foods[{index}].name")
+        pkg.write_float(food.get("time", 0.0), f"foods[{index}].time")
+
+    pkg.write_int32(skill_version)
+    skills = require_array(data.get("skills", []), "skills")
+    pkg.write_int32(len(skills), "skills count")
+    for index, skill in enumerate(skills):
+        require_object(skill, f"skills[{index}]")
+        pkg.write_int32(skill.get("id", 0), f"skills[{index}].id")
+        pkg.write_float(skill.get("level", 1.0), f"skills[{index}].level")
+        pkg.write_float(skill.get("xp", 0.0), f"skills[{index}].xp")
+    pkg.write_dictionary(data.get("custom_data", {}), pkg.write_string, pkg.write_string, "player custom_data")
+
+    for field, default in (("stamina", 50.0), ("max_eitr", 0.0), ("eitr", 0.0)):
+        pkg.write_float(data.get(field, default), field)
+    pkg.write_byte_array(decode_hex(data.get("build_ui_data_hex", ""), "build_ui_data_hex"), "build_ui_data")
+
+    for field in ("pseudo_drop_counters", "item_upgrade_seeds"):
+        if field in data or version == 34:
+            entries = require_object(data.get(field, {}), field)
+            if version == 34:
+                write_counter_dictionary(pkg, entries, field)
+    pkg.write_bytes(decode_hex(data.get("trailing_data_hex", ""), "trailing_data_hex"))
     return pkg.get_bytes().hex()

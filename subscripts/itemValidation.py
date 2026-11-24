@@ -1,5 +1,6 @@
 import json
 
+from subscripts.itemDatabase import get_stable_hash_code
 from subscripts.inventoryLayout import GRID_WIDTH, DEFAULT_GRID_HEIGHT, effective_inventory_rows
 
 MIN_STACK = 0
@@ -155,16 +156,23 @@ def validate_clipboard_item(item, inventory_rows):
     errors = validate_item(item, inventory_rows=inventory_rows, allow_hash_only=True)
     supported = {"prefab", "prefab_hash", "stack", "quality", "durability", "variant", "equipped",
                  "cheated", "cheated_flags", "custom_data", "crafter_id", "crafter_name",
-                 "world_level", "picked_up", "grid_x", "grid_y"}
+                 "world_level", "picked_up", "grid_x", "grid_y", "extra_item_flags"}
     if item.keys() - supported:
         errors.append("The item contains fields this save format cannot store.")
-    if item.get("crafter_name") and not item.get("crafter_id"):
-        errors.append("A crafter name requires a nonzero crafter ID.")
-    if isinstance(item.get("prefab"), str) and "\x00" in item["prefab"]:
+    flags = item.get("extra_item_flags", 0)
+    if type(flags) is not int or not 0 <= flags <= 255 or flags & 3:
+        errors.append("Optional item flags must fit in a byte with bits 0 and 1 clear.")
+    elif item.get("crafter_name") and not item.get("crafter_id") and not flags & 32:
+        errors.append("A crafter name with ID zero requires the optional crafter field.")
+    prefab = item.get("prefab", "")
+    if isinstance(prefab, str) and "\x00" in prefab:
         errors.append("The prefab name contains a null character.")
     try:
         # Escaped, unpaired surrogates in JSON cannot be written as save strings.
         json.dumps(item, ensure_ascii=False).encode("utf-8")
+        if isinstance(prefab, str) and prefab and "prefab_hash" in item:
+            if item["prefab_hash"] != get_stable_hash_code(prefab):
+                errors.append("The prefab name and hash disagree.")
     except (UnicodeError, RecursionError):
         errors.append("The item contains invalid text or nested data.")
     return errors

@@ -1,4 +1,4 @@
-import json
+from copy import deepcopy
 import os
 import sys
 from datetime import datetime
@@ -35,6 +35,9 @@ from ui.valheim_detection import (
 )
 
 from subscripts.fchUtil import (
+    atomic_write,
+    character_json,
+    encode_fch,
     parse_fch,
     read_file_snapshot,
     require_destination_revision,
@@ -137,7 +140,7 @@ class MainWindow(QMainWindow):
         new_character_action = file_menu.addAction("New Character...")
         open_save_action = file_menu.addAction("Open Save File")
         backup_manager_action = file_menu.addAction("Manage Backups...")
-        export_json_action = file_menu.addAction("Export Decompiled JSON...")
+        export_json_action = file_menu.addAction("Export Character JSON...")
 
         file_menu.addSeparator()
 
@@ -535,7 +538,8 @@ class MainWindow(QMainWindow):
                 require_revision(filename, snapshot, expected_revision)
             if snapshot is None:
                 raise FileNotFoundError(filename)
-            self.load_character(parse_fch(snapshot.contents), filename, backup, revision=snapshot.revision)
+            root = parse_fch(snapshot.contents, validate_player=False)
+            self.load_character(root, filename, backup, revision=snapshot.revision)
             kind = "Backup" if backup else "Save"
             self.file_label.setText(
                 f"Loaded {kind}: {Path(filename).name} (Char: {self.root_save.get('character_name')})"
@@ -616,71 +620,51 @@ class MainWindow(QMainWindow):
         if self.load_file(filename):
             self.remember_save_dir(filename)
 
+    def collect_editor_changes(self, player_data=None, root_save=None):
+        # Passing detached models lets export use the same field-level
+        # collectors without committing edits to the working document.
+        if not self.character_tab.save_changes(player_data, root_save):
+            return False
+        if not self.inventory_tab.save_changes(player_data):
+            return False
+        self.skills_tab.save_changes(player_data)
+        self.stats_tab.save_changes(player_data, root_save)
+        self.appearance_tab.save_changes(player_data)
+        return True
+
     def export_decompiled_json(self):
         if not self.root_save:
-            QMessageBox.warning(
-                self,
-                "No Save Loaded",
-                "Please load a Valheim character save first."
-            )
+            QMessageBox.warning(self, "No Save Loaded", "Please load a Valheim character save first.")
             return
 
-        char_name = self.root_save.get(
-            "character_name",
-            "Viking"
-        ).strip()
-
-        if not char_name:
-            char_name = "Viking"
-
-        default_filename = str(
-            Path(self.last_save_dir()) / f"{char_name}_decompiled.json"
-        )
-
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Decompiled JSON",
-            default_filename,
-            "JSON Files (*.json)"
-        )
-
+        char_name = self.character_tab.name_input.text().strip() or "Viking"
+        default_filename = str(Path(self.last_save_dir()) / f"{char_name}_decompiled.json")
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Character JSON", default_filename,
+                                                  "JSON Files (*.json)")
         if not filename:
             return
-
-        self.remember_save_dir(filename)
-
         try:
-            export_data = dict(self.root_save)
-
-            if export_data.get("player_data_hex"):
-                export_data["player_data"] = unpack_player_data_hex(
-                    export_data["player_data_hex"]
-                )
-            else:
-                export_data["player_data"] = None
-
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(
-                    export_data,
-                    f,
-                    indent=4,
-                    ensure_ascii=False
-                )
-
-            QMessageBox.information(
-                self,
-                "JSON Exported",
-                "The save was decompiled successfully.\n\n"
-                f"JSON file:\n{filename}"
-            )
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Export Failed",
-                "Could not export the decompiled save:\n\n"
-                f"{e}"
-            )
+            path = Path(filename)
+            if path.suffix.lower() != ".json" or is_steam_cloud_path(path):
+                raise ValueError("Choose a .json file outside Steam Cloud storage.")
+            if self.current_fch:
+                original = Path(self.current_fch)
+                if path.resolve() == original.resolve() or (path.exists() and original.exists()
+                                                             and path.samefile(original)):
+                    raise ValueError("Choose a JSON file separate from the character save.")
+            destination = read_file_snapshot(path)
+            export_data = deepcopy(self.root_save)
+            export_data.pop("player_data_hex", None)
+            player = deepcopy(self.player_data)
+            if not self.collect_editor_changes(player, export_data):
+                return
+            player.pop("character_name", None)  # Only the outer profile stores the name.
+            export_data["player_data"] = player
+            encode_fch(export_data)
+            atomic_write(path, character_json(export_data), destination)
+            QMessageBox.information(self, "JSON Exported", f"Exported current character edits to {path}.")
+        except (OSError, ValueError, EOFError) as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not export the character JSON.\n\n{exc}")
 
     def inspect_save_destination(self, destination):
         if is_steam_cloud_path(destination):
@@ -702,14 +686,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # 1. collect all changes from the active tabs
-            if not self.character_tab.save_changes():
+            if not self.collect_editor_changes():
                 return
-            if not self.inventory_tab.save_changes():
-                return
-            self.skills_tab.save_changes()
-            self.stats_tab.save_changes()
-            self.appearance_tab.save_changes()
 
             # 2. update
             char_name = self.root_save.get("character_name", "Viking").strip()

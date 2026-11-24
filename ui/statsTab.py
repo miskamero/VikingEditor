@@ -194,12 +194,14 @@ class StatsTab(QWidget):
             self.food_table.removeRow(current_row)
         self.update_food_buttons()
 
-    def save_changes(self):
+    def save_changes(self, player_data=None, root_save=None):
         """Applies UI edits back to the reference dictionaries."""
-        if not self.player_data:
+        player = self.player_data if player_data is None else player_data
+        root = self.root_save if root_save is None else root_save
+        if not player:
             return
 
-        self.player_data.update(self.edits)
-        self.player_data["foods"] = [dict(food) for food in self.food_records]
-        if self.root_save:
-            self.root_save["used_cheats"] = self.used_cheats_check.isChecked()
+        player.update(self.edits)
+        player["foods"] = [dict(food) for food in self.food_records]
+        if root:
+            root["used_cheats"] = self.used_cheats_check.isChecked()

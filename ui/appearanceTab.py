@@ -159,8 +159,7 @@ class AppearanceTab(QWidget):
             self.edits["hair_color"] = self.current_hair_rgb
             self.update_color_preview(self.hair_preview, self.current_hair_rgb)
 
-    def save_changes(self):
-        if not self.player_data:
-            return
-
-        self.player_data.update(self.edits)
+    def save_changes(self, player_data=None):
+        target = self.player_data if player_data is None else player_data
+        if target:
+            target.update(self.edits)

@@ -253,8 +253,10 @@ class CharacterTab(QWidget):
             )
         )
 
-    def save_changes(self):
-        if not self.root_save:
+    def save_changes(self, player_data=None, root_save=None):
+        root = self.root_save if root_save is None else root_save
+        player = self.player_data if player_data is None else player_data
+        if not root:
             return False
 
         name = self.name_input.text()
@@ -270,11 +272,12 @@ class CharacterTab(QWidget):
             )
             return False
 
-        self.root_save["character_name"] = new_name
-        self.loaded_name_text = name
+        root["character_name"] = new_name
+        if root_save is None:
+            self.loaded_name_text = name
 
-        if self.player_data is not None:
-            self.player_data["character_name"] = new_name
+        if player is not None:
+            player["character_name"] = new_name
         return True
 
     def copy_player_id(self):

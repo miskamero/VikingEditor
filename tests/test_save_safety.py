@@ -223,10 +223,41 @@ class SaveSafetyTests(QtTestCase):
         destination = self.directory / "new" / "Restored.fch"
         original = self.source.read_bytes() + b"opaque extension"
         self.source.write_bytes(original)
+        self.question.return_value = QMessageBox.No
+        dialog.restore_file(self.source, destination)
+        self.assertFalse(destination.exists())
+        self.assertIn("passed checksum verification", self.question.call_args.args[2])
+        self.assertIn(str(destination), self.question.call_args.args[2])
+        self.assertEqual(self.question.call_args.args[-1], QMessageBox.No)
+        self.question.return_value = QMessageBox.Yes
         dialog.restore_file(self.source, destination)
         self.assertEqual(destination.read_bytes(), original)
         self.assertFalse(list(self.backups.rglob("*.fch")))
         self.critical.assert_not_called()
+
+    def test_checksum_valid_structural_failure_requires_archival_confirmation_and_clears_active_form(self):
+        from tests.test_player_versions import wire_payload
+        from tests.test_serialization_boundaries import profile_wire
+
+        dialog = self.widget(BackupManagerDialog, self.backups, self.window)
+        original = self.target.read_bytes()
+        self.assertTrue(self.window.load_file(self.target))
+        nested = wire_payload()[0]
+        for archival, detail in ((profile_wire(nested[:-1]), "Nested player data:"),
+                                 (profile_wire(nested, version=48), "Unsupported character profile version 48")):
+            self.source.write_bytes(archival)
+            self.question.return_value = QMessageBox.No
+            dialog.restore_file(self.source, self.target)
+            self.assertIn(detail, self.question.call_args.args[2])
+            self.assertEqual(self.target.read_bytes(), original)
+            self.assertTrue(self.window.btn_save_save.isEnabled())
+        self.question.return_value = QMessageBox.Yes
+        dialog.restore_file(self.source, self.target)
+        self.assertEqual(self.target.read_bytes(), archival)
+        self.assertEqual([copy.read_bytes() for copy in self.backups.rglob("*.fch")], [original])
+        self.assertIsNone(self.window.root_save)
+        self.assertFalse(self.window.btn_save_save.isEnabled())
+        self.assertIn("restored verbatim", self.information.call_args.args[2])
 
     def test_failed_reload_after_restore_cannot_save_stale_form(self):
         self.window.load_file(str(self.target))

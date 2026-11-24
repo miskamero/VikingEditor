@@ -271,6 +271,25 @@ If it cannot find it, the application will allow you to select the Valheim insta
 
 VikingEditor does **not** modify the original save file when you save your changes to a different location.
 
+### Character JSON
+
+**File → Export Character JSON** includes pending edits and leaves the open document and its save file intact.
+The CLI supports the same format via `python -m subscripts.fchUtil unpack character.fch character.json`
+and `python -m subscripts.fchUtil pack character.json output.fch`.
+
+Edit `player_data` for decoded player fields. Older exports containing only `player_data_hex` can still be
+compiled if the nested payload passes supported-format validation. If both fields are present, they must
+encode identical bytes. Remove `player_data_hex` to apply decoded changes, or remove `player_data` to keep
+the hexadecimal payload. The profile, player, inventory, and skill versions are preserved.
+In Inventory 109, `cheated_flags` is opaque. In Inventory 110, `cheated` controls bit zero and the
+remaining `cheated_flags` bits are preserved.
+
+Keep opaque hex fields and `extra_item_flags` entries to retain build UI data, map data, trailing player
+bytes, and optional item fields explicitly stored at default values. Nonfinite binary32 values use
+`{"float32_hex": "…"}` with four little-endian bytes. The compiler rejects malformed or ambiguous data
+that it cannot edit losslessly. The backup manager can restore a checksum-valid archival file verbatim
+after an explicit warning when supported structural validation fails.
+
 ---
 
 ## Creating a New Character

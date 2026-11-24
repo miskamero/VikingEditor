@@ -700,23 +700,26 @@ class InventoryTab(QWidget):
         finally:
             dialog.deleteLater()
 
-    def save_changes(self):
-        if not self.player_data or self._rows == self._loaded_rows:
+    def save_changes(self, player_data=None):
+        target_data = self.player_data if player_data is None else player_data
+        if not target_data or self._rows == self._loaded_rows:
             return True
 
-        uniques = self.player_data.get("uniques", [])
-        if (has_slot_mod_data(self.player_data) or not pockets_are_editable(uniques)
+        uniques = target_data.get("uniques", [])
+        if (has_slot_mod_data(target_data) or not pockets_are_editable(uniques)
                 or effective_inventory_rows(uniques) != self._loaded_rows):
             QMessageBox.warning(self, "Cannot Resize Inventory", "The saved inventory layout has changed.")
             return False
         if affected := self.items_outside_rows(self._rows):
             target = self._rows
-            self._rows = self._loaded_rows
-            self.set_pocket_checks()
-            self.init_empty_grid()
+            if player_data is None:
+                self._rows = self._loaded_rows
+                self.set_pocket_checks()
+                self.init_empty_grid()
             self.show_resize_blockers(target, affected)
             return False
 
-        self.player_data["uniques"] = resize_pocket_keys(uniques, self._loaded_rows, self._rows)
-        self._loaded_rows = self._rows
+        target_data["uniques"] = resize_pocket_keys(uniques, self._loaded_rows, self._rows)
+        if player_data is None:
+            self._loaded_rows = self._rows
         return True

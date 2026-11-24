@@ -549,8 +549,9 @@ class SkillsTab(QWidget):
             ):
                 level_widget.setValue(0.0)
 
-    def save_changes(self):
-        if self.player_data is None:
+    def save_changes(self, player_data=None):
+        target = self.player_data if player_data is None else player_data
+        if target is None:
             return
 
         updated_skills = []
@@ -582,7 +583,7 @@ class SkillsTab(QWidget):
 
             updated_skills.append(dict(self.skill_records[row]))
 
-        self.player_data["skills"] = updated_skills
+        target["skills"] = updated_skills
 
     def update_skill_count(self):
         count = self.table.rowCount()

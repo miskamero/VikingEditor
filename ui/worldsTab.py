@@ -1,6 +1,6 @@
 import math
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from ui.tabStyle import detail_layout, polish_forms
 from PySide6.QtWidgets import (
     QWidget,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QSplitter,
     QLineEdit,
+    QComboBox,
     QGridLayout,
 )
 
@@ -24,17 +25,22 @@ class WorldsTab(QWidget):
         super().__init__()
 
         self.root_save = None
-        self.worlds = []
-        self.known_worlds = {}
+        self.worlds = {}
+        self.named_times = {}
 
         main_layout = detail_layout(self, scroll=True)
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 
-        # world lsit nöf
         worlds_group = QGroupBox("Worlds")
         worlds_layout = QVBoxLayout(worlds_group)
+        self.collection = QComboBox()
+        self.collection.addItem("Named play time", 0)
+        self.collection.addItem("Saved world locations", "records")
+        self.collection.setAccessibleName("World data collection")
+        self.collection.currentIndexChanged.connect(self.show_collection)
+        worlds_layout.addWidget(self.collection)
         self.world_search = QLineEdit()
         self.world_search.setPlaceholderText("Search worlds…")
         self.world_search.setClearButtonEnabled(True)
@@ -59,6 +65,7 @@ class WorldsTab(QWidget):
 
 
         self.world_name_label = QLabel("-")
+        self.world_name_label.setTextFormat(Qt.PlainText)
         self.world_name_label.setWordWrap(True)
         self.world_name_label.setStyleSheet(
             "font-size: 16px; font-weight: bold;"
@@ -233,151 +240,74 @@ class WorldsTab(QWidget):
             matches = query in item.text().casefold()
             item.setHidden(not matches)
             visible += matches
-        self.world_count_label.setText(
-            f"{visible} of {self.world_list.count()} worlds"
-            if visible else ("No matching worlds." if self.world_list.count() else "No worlds recorded.")
-        )
+        total = self.world_list.count()
+        self.world_count_label.setText(f"{visible} of {total} entries" if visible else
+                                       ("No matching entries." if total else "No entries in this collection."))
+        current = self.world_list.currentItem()
+        if current and current.isHidden():
+            self.world_list.setCurrentRow(-1)
 
     def load_data(self, root_save):
         self.root_save = root_save
-        self.worlds = []
-        self.known_worlds = {}
+        data = root_save or {}
+        self.worlds = {str(record["world_id"]): record for record in data.get("worlds", [])}
 
-        self.world_list.clear()
-        self.world_search.clear()
-        self.filter_worlds()
+        # RawStats bucket 0 is the lifetime total. Other buckets can overlap it
+        # and have their own entries. None provides a UID for these names.
+        profiles = data.get("profiles", [])
+        self.named_times = {}
+        for index, profile in enumerate(profiles if isinstance(profiles, list) else []):
+            times = profile.get("known_worlds") if isinstance(profile, dict) else None
+            if isinstance(times, dict):
+                self.named_times[index] = {name: seconds for name, seconds in times.items()
+                                           if isinstance(name, str) and type(seconds) is not bool
+                                           and isinstance(seconds, (int, float))}
+        blocked = self.collection.blockSignals(True)
+        while self.collection.count() > 2:
+            self.collection.removeItem(2)
+        self.collection.setItemText(0, f"Named play time, total ({len(self.named_times.get(0, {}))})")
+        self.collection.setItemText(1, f"Saved world locations ({len(self.worlds)})")
+        for index, times in self.named_times.items():
+            if index and times:
+                self.collection.addItem(f"Named play time, statistics profile {index} ({len(times)})", index)
+        self.collection.setCurrentIndex(1 if self.worlds and not self.named_times.get(0) else 0)
+        if not self.worlds and not self.named_times.get(0) and self.collection.count() > 2:
+            self.collection.setCurrentIndex(2)
+        self.collection.blockSignals(blocked)
+        self.show_collection()
+
+    def show_collection(self):
         self.clear_display()
-
-        if not self.root_save:
-            return
-
-        self.worlds = self.root_save.get(
-            "worlds",
-            []
-        )
-
-        # RawStats = 0 contains total play time in v46/v47; difficulty profiles
-        # record the same time again. Missing Raw data must not use those totals.
-        profiles = self.root_save.get("profiles", [])
-        raw = profiles[0] if isinstance(profiles, list) and profiles else {}
-        known_worlds = raw.get("known_worlds", {}) if isinstance(raw, dict) else {}
-        if isinstance(known_worlds, dict):
-            self.known_worlds = {
-                name: seconds for name, seconds in known_worlds.items()
-                if isinstance(name, str)
-                and isinstance(seconds, (int, float))
-                and not isinstance(seconds, bool)
-                and math.isfinite(seconds)
-            }
-
-        for world_name in self.known_worlds:
-            item = QListWidgetItem(
-                world_name
-            )
-
-            item.setData(
-                Qt.ItemDataRole.UserRole,
-                world_name
-            )
-
-            self.world_list.addItem(item)
-
-        # so that there are world records but no known_worlds, still show them rather than leaving the tab empty.
-
-        if not self.known_worlds:
-            for index, world in enumerate(
-                self.worlds
-            ):
-                item = QListWidgetItem(
-                    f"World {index + 1}"
-                )
-
-                item.setData(
-                    Qt.ItemDataRole.UserRole,
-                    index
-                )
-
+        collection = self.collection.currentData()
+        show_records = collection == "records"
+        entries = self.worlds if show_records else self.named_times.get(collection, {})
+        with QSignalBlocker(self.world_list):
+            self.world_list.clear()
+            self.world_search.clear()
+            for key in entries:
+                item = QListWidgetItem(f"World UID {key}" if show_records else key)
+                item.setData(Qt.ItemDataRole.UserRole, key)
                 self.world_list.addItem(item)
-
-        if self.world_list.count() > 0:
+        if entries:
             self.world_list.setCurrentRow(0)
         self.filter_worlds()
 
-    # World Selection
     def on_world_selected(self, row):
-        if row < 0:
-            self.clear_display()
+        self.clear_display()
+        item = self.world_list.item(row) if row >= 0 else None
+        if item is None or item.isHidden():
             return
-
-        item = self.world_list.item(row)
-
-        if item is None:
-            self.clear_display()
-            return
-
-        world_name = item.data(
-            Qt.ItemDataRole.UserRole
-        )
-
-        # Known world
-        if isinstance(world_name, str):
-            self.world_name_label.setText(
-                world_name
-            )
-
-            seconds = self.known_worlds.get(
-                world_name,
-                0
-            )
-
-            self.time_played_label.setText(
-                f"Time Played: {self.format_duration(seconds)}"
-            )
-
-            world = self.get_world_record(
-                row
-            )
-
+        key = item.data(Qt.ItemDataRole.UserRole)
+        collection = self.collection.currentData()
+        if collection == "records":
+            self.world_name_label.setText("Saved world record")
+            self.time_played_label.setText("Time Played: Unknown")
+            self.display_world(self.worlds[key])
         else:
-            # Fallback world entry
-            world = None
-
-            if (
-                isinstance(world_name, int)
-                and world_name < len(self.worlds)
-            ):
-                world = self.worlds[
-                    world_name
-                ]
-
-            self.world_name_label.setText(
-                item.text()
-            )
-
-            self.time_played_label.setText(
-                "Time Played: Unknown"
-            )
-
-        if world is None:
-            self.clear_location_display()
-            return
-
-        self.display_world(world)
-
-    # World Record, Klinoff has the world record in many sports, so this is a nod to him nöfnöfnöfnöf
-    def get_world_record(self, row):
-        if not self.worlds:
-            return None
-
-        # If there is exactly one character-world record use it for the selected known world.
-        if len(self.worlds) == 1:
-            return self.worlds[0]
-
-        # If there are multiple records and their order corresponds to the known-world order, use the same index.
-        if row < len(self.worlds):
-            return self.worlds[row]
-
-        return None
+            self.world_name_label.setText(key)
+            seconds = self.named_times[collection][key]
+            duration = self.format_duration(seconds) if math.isfinite(seconds) else "Unknown"
+            self.time_played_label.setText(f"Time Played: {duration}")
 
     # Display
     def display_world(self, world):
@@ -485,7 +415,9 @@ class WorldsTab(QWidget):
             return str(value)
 
     def format_duration(self, seconds):
-        seconds = int(float(seconds))
+        seconds = int(seconds)
+        prefix = "-" if seconds < 0 else ""
+        seconds = abs(seconds)
 
         hours, seconds = divmod(seconds, 3600)
         minutes, seconds = divmod(seconds, 60)
@@ -501,7 +433,7 @@ class WorldsTab(QWidget):
         if seconds or not parts:
             parts.append(f"{seconds}s")
 
-        return " ".join(parts)
+        return prefix + " ".join(parts)
 
     # Button States
     def update_button_states(self):
@@ -542,7 +474,7 @@ class WorldsTab(QWidget):
         )
 
     def copy_location(self, text):
-        if not text or text in ("Not set", "-"):
+        if self.world_id_label.text() == "-" or not text or text in ("Not set", "-"):
             return
 
         QApplication.clipboard().setText(
