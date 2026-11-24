@@ -261,6 +261,11 @@ def read_int_int_dictionary(pkg: PlayerDataReader) -> dict:
 
 # Player.Save / Player.Load
 
+def item_is_cheated(item, inventory_version):
+    """Return the effective saved flag. Legacy bytes have no effective flag."""
+    return inventory_version == 110 and bool(item.get("cheated", item.get("cheated_flags", 0) & 1))
+
+
 def unpack_player_data_hex(hex_string: str) -> dict:
     """
     parses the nested Player.Save payload from a hex string into a Python dictionary.
@@ -391,13 +396,9 @@ def unpack_player_data_hex(hex_string: str) -> dict:
 
             item["custom_data"][key] = value
 
-        # current item format always has now a extra cheated byte.
-        cheated_flags = pkg.read_byte()
-        item["cheated_flags"] = cheated_flags
-
-        item["cheated"] = bool(
-            cheated_flags & 1
-        )
+        # Inventory 109 consumes this byte without interpreting any bits.
+        item["cheated_flags"] = pkg.read_byte()
+        item["cheated"] = item_is_cheated(item, out["inventory_version"])
 
         out["inventory"].append(item)
 
@@ -686,13 +687,10 @@ def pack_player_data_hex(data: dict) -> str:
                 pkg.write_string(k)
                 pkg.write_string(v)
 
-        # Preserve uninterpreted bits while allowing the existing checkbox to
-        # edit bit 0. Current ItemData.Load honors this bit only in v110;
-        # retaining v109 avoids changing the meaning of legacy item flags.
-        cheated_flags = item.get("cheated_flags", 0) & ~1
-
-        if item.get("cheated", False):
-            cheated_flags |= 1
+        # Preserve all of the v109 byte. Only v110 applies explicit bit 0 edits.
+        cheated_flags = item.get("cheated_flags", 0)
+        if inventory_version == 110:
+            cheated_flags = (cheated_flags & ~1) | item_is_cheated(item, inventory_version)
 
         pkg.write_byte(cheated_flags)
 

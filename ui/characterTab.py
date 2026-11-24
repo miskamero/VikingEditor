@@ -153,6 +153,7 @@ class CharacterTab(QWidget):
         self.name_input.setText(
             str(character_name)
         )
+        self.loaded_name_text = self.name_input.text()
 
         player_id = self.root_save.get(
             "player_id",
@@ -256,7 +257,10 @@ class CharacterTab(QWidget):
         if not self.root_save:
             return False
 
-        new_name = self.name_input.text().strip()
+        name = self.name_input.text()
+        if name == self.loaded_name_text:
+            return True
+        new_name = name.strip()
 
         if not new_name:
             QMessageBox.warning(
@@ -267,6 +271,7 @@ class CharacterTab(QWidget):
             return False
 
         self.root_save["character_name"] = new_name
+        self.loaded_name_text = name
 
         if self.player_data is not None:
             self.player_data["character_name"] = new_name

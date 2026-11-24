@@ -26,7 +26,8 @@ from ui.tabStyle import DETAIL_STYLE
 from ui.theme import set_themed_style
 from ui.itemEditDialog import ItemEditDialog
 from subscripts.equipmentSlots import eaq_equipment, eaq_inventory_rows, has_slot_mod_data
-from subscripts.itemValidation import validate_item, validate_clipboard_item
+from subscripts.itemValidation import EQUIPMENT_PROPERTY_LIMITS, validate_item, validate_clipboard_item
+from subscripts.playerDataUtil import item_is_cheated
 
 class InventoryTab(QWidget):
     GRID_WIDTH = 8
@@ -34,6 +35,7 @@ class InventoryTab(QWidget):
     MIN_SLOT_SIZE = 82
     MAX_SLOT_SIZE = 110
     TOOLBAR_SPACING = 12
+    inventory_version = 110
 
     def __init__(self):
         super().__init__()
@@ -242,8 +244,8 @@ class InventoryTab(QWidget):
 
     def load_data(self, player_data, root_save=None):
         self.player_data = player_data
+        self.inventory_version = player_data.get("inventory_version", 109)
         self._eaq_rows = eaq_inventory_rows(player_data)
-        self.clear_cheated_button.setEnabled(True)
 
         uniques = player_data.get(
             "uniques",
@@ -271,14 +273,18 @@ class InventoryTab(QWidget):
         self.init_empty_grid(self.get_inventory_rows(), refresh=True)
         self._loaded_pockets = (self.wider_pockets_checkbox.isChecked(), self.deeper_pockets_checkbox.isChecked())
         self._mod_storage = has_slot_mod_data(player_data)
-        for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox, self.clear_cheated_button):
+        for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox):
             control.setEnabled(not self._mod_storage)
         for control in (self.wider_pockets_checkbox, self.deeper_pockets_checkbox):
             control.setToolTip("Inventory dimensions are preserved while slot-mod data is present." if self._mod_storage else "")
-        self.clear_cheated_button.setToolTip(
-            "Bulk changes are disabled to preserve slot-mod items. Edit recognized items individually."
-            if self._mod_storage else "Remove the 'spawned in with cheats' flag from every inventory item."
-        )
+        self.clear_cheated_button.setEnabled(self.inventory_version == 110 and not self._mod_storage)
+        if self.inventory_version == 109:
+            tooltip = "Valheim ignores the extra flag byte in Inventory 109. The byte is preserved."
+        elif self._mod_storage:
+            tooltip = "Bulk changes are disabled to preserve slot-mod items. Edit recognized items individually."
+        else:
+            tooltip = "Clear saved item cheat flags. Valheim can reapply them based on item properties."
+        self.clear_cheated_button.setToolTip(tooltip)
         self.load_equipment(root_save)
 
     def load_equipment(self, root_save):
@@ -307,7 +313,10 @@ class InventoryTab(QWidget):
             self.equipment_slots.append(slot)
             self.equipment_layout.addWidget(slot, 2, column)
             # Unsupported prefab IDs or properties remain visible and untouched.
-            editable = not validate_item(item, inventory_rows=item["grid_y"] + 1)
+            editable = not validate_item(item, inventory_rows=item["grid_y"] + 1) and all(
+                key not in item or lower <= item[key] <= upper
+                for key, (lower, upper) in EQUIPMENT_PROPERTY_LIMITS.items()
+            )
             slot.setEnabled(editable)
             if not editable:
                 slot.setToolTip(slot.toolTip() + "\nPreserved read-only: this item cannot be safely edited.")
@@ -322,32 +331,32 @@ class InventoryTab(QWidget):
             return
         player_data = self.player_data
         original = slot.item_data
-        dialog = ItemEditDialog(original, self, original["grid_y"] + 1)
+        dialog = ItemEditDialog(
+            original, self, original["grid_y"] + 1, inventory_version=self.inventory_version, equipment=True,
+        )
         try:
             # Slot-type checks depend on the mod's runtime definitions. Keep the
             # identity and residence flags; reuse property editing only.
             dialog.prefab_input.setEnabled(False)
             dialog.stack_input.setEnabled(False)
             dialog.equipped_input.setEnabled(False)
-            baseline = dialog.get_updated_data()
             if (dialog.exec() == QDialog.Accepted and self.player_data is player_data
                     and slot in self.equipment_slots and slot.item_data is original
                     and any(item is original for item in player_data["inventory"])):
-                updated = dialog.get_updated_data()
-                for key in ("quality", "durability", "variant", "cheated", "crafter_id", "crafter_name"):
-                    if updated[key] != baseline[key]:
-                        original[key] = updated[key]
+                allowed = {"quality", "durability", "variant", "cheated", "crafter_id", "crafter_name"}
+                original.update((key, value) for key, value in dialog.get_changes().items() if key in allowed)
                 slot.update_visuals()
         finally:
             dialog.deleteLater()
 
     def clear_all_cheated_flags(self):
-        if not self.player_data or getattr(self, "_mod_storage", False):
+        if not self.player_data or self.inventory_version != 110 or self._mod_storage:
             return
 
+        player_data = self.player_data
         flagged_items = [
             item for item in self.player_data.get("inventory", [])
-            if item.get("cheated", False)
+            if item_is_cheated(item, self.inventory_version)
         ]
         if not flagged_items:
             QMessageBox.information(
@@ -362,7 +371,7 @@ class InventoryTab(QWidget):
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
-        if confirm != QMessageBox.Yes:
+        if confirm != QMessageBox.Yes or self.player_data is not player_data:
             return
 
         for item in flagged_items:
@@ -430,14 +439,14 @@ class InventoryTab(QWidget):
         dialog = ItemEditDialog(
             slot.item_data,
             self,
-            self.get_inventory_rows()
+            self.get_inventory_rows(),
+            inventory_version=self.inventory_version,
         )
         try:
             if (dialog.exec() == QDialog.Accepted
                     and self.player_data is player_data
                     and self.is_current_slot(slot) and slot.item_data is original_item):
-                updated = dialog.get_updated_data()
-                original_item.update(updated)
+                original_item.update(dialog.get_changes())
                 slot.update_visuals()
         finally:
             dialog.deleteLater()
@@ -467,6 +476,7 @@ class InventoryTab(QWidget):
 
         clipboard_data = {
             "valheim_editor": "inventory_item",
+            "inventory_version": self.inventory_version,
             "item": slot.item_data.copy()
         }
 
@@ -523,6 +533,24 @@ class InventoryTab(QWidget):
             QMessageBox.warning(self, "Invalid Item", "\n".join(errors))
             return
 
+        source_version = clipboard_data.get("inventory_version")
+        if source_version is not None and (type(source_version) is not int or source_version not in (109, 110)):
+            QMessageBox.warning(self, "Invalid Item", "The clipboard item has an unsupported inventory version.")
+            return
+        raw_low_bit = pasted_item.get("cheated_flags", 0) & 1
+        active_flag = item_is_cheated(pasted_item, 110)
+        if source_version is None:
+            if self.inventory_version == 110 and "cheated_flags" in pasted_item and (raw_low_bit or active_flag):
+                QMessageBox.warning(self, "Unknown Inventory Version",
+                                    "Copy this item again so VikingEditor can identify the saved flag's meaning.")
+                return
+        elif source_version != self.inventory_version and (raw_low_bit or (source_version == 110 and active_flag)):
+            QMessageBox.warning(self, "Incompatible Item Flag",
+                                "This item has a flag that cannot be carried across these inventory versions.")
+            return
+        if self.inventory_version == 109:
+            pasted_item["cheated"] = False
+
         self.player_data["inventory"].append(pasted_item)
         slot.set_item(pasted_item)
 
@@ -550,14 +578,14 @@ class InventoryTab(QWidget):
         dialog = ItemEditDialog(
             new_item,
             self,
-            self.get_inventory_rows()
+            self.get_inventory_rows(),
+            inventory_version=self.inventory_version,
         )
         try:
             if (dialog.exec() == QDialog.Accepted
                     and self.player_data is player_data
                     and self.is_current_slot(slot) and not slot.item_data):
-                final_item = dialog.get_updated_data()
-                new_item.update(final_item)
+                new_item.update(dialog.get_changes())
                 player_data["inventory"].append(new_item)
                 slot.set_item(new_item)
         finally:

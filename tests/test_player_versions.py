@@ -70,7 +70,8 @@ class NestedVersionTests(unittest.TestCase):
                     data = player.unpack_player_data_hex(original.hex())
                     self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), original)
                     data["inventory"][0]["cheated"] = False
-                    original[flag] &= ~1
+                    if version == 110:
+                        original[flag] &= ~1
                     self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), original)
 
     def test_unknown_skill_ids_and_unsupported_skill_layouts(self):
@@ -100,6 +101,8 @@ class NestedVersionTests(unittest.TestCase):
                     self.assertEqual(data["version"], version)
                     self.assertEqual(data["inventory_version"], inventory_version)
                     first, second = data["inventory"]
+                    self.assertIs(first["cheated"], inventory_version == 110)
+                    self.assertEqual(first["cheated_flags"], 0xa5)
                     self.assertEqual(first["prefab_hash"], -1234567)
                     self.assertEqual(first["custom_data"], {"note": "crafted", "mod": "opaque"})
                     self.assertEqual(first["crafter_name"], "Åsa")
@@ -118,15 +121,17 @@ class NestedVersionTests(unittest.TestCase):
                     # Export/import converts integer dictionary keys to strings.
                     self.assertEqual(bytes.fromhex(player.pack_player_data_hex(json.loads(json.dumps(data)))), payload)
 
-    def test_editing_cheat_bit_retains_inventory_version_and_other_flag_bits(self):
+    def test_effective_cheat_edit_respects_legacy_opaque_byte(self):
         for inventory_version in (109, 110):
             with self.subTest(inventory=inventory_version):
                 payload, _, offset, _ = wire_payload(inventory_version=inventory_version)
                 data = player.unpack_player_data_hex(payload.hex())
-                data["inventory"][0]["cheated"] = False
-                expected = bytearray(payload)
-                expected[offset] &= ~1
-                self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), expected)
+                for cheated in (True, False):
+                    data["inventory"][0]["cheated"] = cheated
+                    expected = bytearray(payload)
+                    if inventory_version == 110:
+                        expected[offset] = (expected[offset] & ~1) | cheated
+                    self.assertEqual(bytes.fromhex(player.pack_player_data_hex(data)), expected)
 
     def test_new_and_legacy_defaults(self):
         data = create_empty_player_data()

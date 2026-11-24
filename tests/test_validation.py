@@ -22,8 +22,8 @@ class ItemValidationTests(unittest.TestCase):
                 self.assertFalse(is_valid_item(self.item(prefab=value)))
 
     def test_numeric_limits(self):
-        for field, low, high in (("stack", 1, 9999), ("quality", 1, 99),
-                                 ("variant", 0, 99), ("durability", 0, 99999),
+        for field, low, high in (("stack", 0, 65535), ("quality", 0, 65535),
+                                 ("variant", -(2**31), 2**31 - 1), ("durability", -21474836.48, 21474836.47),
                                  ("grid_x", 0, 7), ("grid_y", 0, 3)):
             for value in (low, high):
                 with self.subTest(field=field, valid=value):
@@ -63,7 +63,7 @@ class ItemValidationTests(unittest.TestCase):
                               validate_item(self.item(crafter_id=value)))
 
     def test_collects_multiple_errors(self):
-        self.assertGreaterEqual(len(validate_item(self.item(prefab="", stack=0, cheated=1))), 3)
+        self.assertGreaterEqual(len(validate_item(self.item(prefab="", stack=-1, cheated=1))), 3)
 
     def test_nonfinite_durability(self):
         for value in (float("nan"), float("inf"), -float("inf")):

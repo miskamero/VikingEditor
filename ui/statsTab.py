@@ -1,3 +1,4 @@
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
     QWidget,
     QFormLayout,
@@ -21,6 +22,8 @@ class StatsTab(QWidget):
         super().__init__()
         self.player_data = None
         self.root_save = None
+        self.edits = {}
+        self.food_records = []
 
         main_layout = detail_layout(self, scroll=True)
 
@@ -62,12 +65,12 @@ class StatsTab(QWidget):
         vitals_layout.addRow("Current Eitr:", self.eitr_spin)
         top_layout.addWidget(vitals_group)
 
-        # 2. Active Foods (klinoff snore)
-        food_group = QGroupBox("Active Food Buffs (Max 3)")
+        food_group = QGroupBox("Active Food Buffs")
         food_layout = QVBoxLayout(food_group)
         
         food_buttons = QHBoxLayout()
         self.btn_add_food = QPushButton("Add Food")
+        self.btn_add_food.setToolTip("You can add food while fewer than three foods are active.")
         self.btn_remove_food = QPushButton("Remove Selected")
         food_buttons.addWidget(self.btn_add_food)
         food_buttons.addWidget(self.btn_remove_food)
@@ -106,7 +109,9 @@ class StatsTab(QWidget):
         meta_layout = QFormLayout(meta_group)
 
         self.used_cheats_check = QCheckBox("This character has used cheats")
-        self.used_cheats_check.setToolTip("Character-wide flag; individual item flags are edited in Inventory.")
+        self.used_cheats_check.setToolTip(
+            "This is the character-wide flag. Valheim also checks item flags and other conditions for achievements."
+        )
         meta_layout.addRow(self.used_cheats_check)
         bottom_layout.addWidget(meta_group, 1)
         main_layout.addLayout(bottom_layout)
@@ -117,6 +122,18 @@ class StatsTab(QWidget):
         self.btn_add_food.clicked.connect(lambda: self.add_food_row())
         self.btn_remove_food.clicked.connect(self.remove_selected_food)
         self.food_table.itemSelectionChanged.connect(self.update_food_buttons)
+        self.food_table.itemChanged.connect(self.edit_food_name)
+        self.vital_fields = (
+            ("max_health", self.max_health_spin, 25.0), ("health", self.health_spin, 25.0),
+            ("max_stamina", self.max_stamina_spin, 50.0), ("stamina", self.stamina_spin, 50.0),
+            ("max_eitr", self.max_eitr_spin, 0.0), ("eitr", self.eitr_spin, 0.0),
+            ("guardian_power_cooldown", self.gp_cooldown_spin, 0.0),
+        )
+        for field, spin, _ in self.vital_fields:
+            spin.valueChanged.connect(lambda value, key=field: self.edits.update({key: value}))
+        self.gp_combo.currentIndexChanged.connect(
+            lambda _: self.edits.update(guardian_power=self.gp_combo.currentData())
+        )
         self.update_food_buttons()
 
     def update_food_buttons(self):
@@ -127,59 +144,53 @@ class StatsTab(QWidget):
         """Loads data from both the nested character payload and the outer container."""
         self.player_data = player_data
         self.root_save = root_save
+        self.edits.clear()
 
-        if not self.player_data:
-            return
+        data = player_data or {}
+        for field, spin, default in self.vital_fields:
+            with QSignalBlocker(spin):
+                spin.setValue(data.get(field, default))
 
-        # Vitals loading wheeeee
-        self.max_health_spin.setValue(self.player_data.get("max_health", 25.0))
-        self.health_spin.setValue(self.player_data.get("health", 25.0))
-        self.max_stamina_spin.setValue(self.player_data.get("max_stamina", 50.0))
-        self.stamina_spin.setValue(self.player_data.get("stamina", 50.0))
-        self.max_eitr_spin.setValue(self.player_data.get("max_eitr", 0.0))
-        self.eitr_spin.setValue(self.player_data.get("eitr", 0.0))
-
-        # Active Foods loading
         self.food_table.setRowCount(0)
-        foods = self.player_data.get("foods", [])
-        for food in foods:
-            self.add_food_row(food.get("name", ""), food.get("time", 1200.0))
+        self.food_records.clear()
+        for food in data.get("foods", []):
+            self.insert_food_record(dict(food))
         self.update_food_buttons()
 
-        # Guardian Power loading
-        gp_internal = self.player_data.get("guardian_power", "")
-        index = self.gp_combo.findData(gp_internal)
-        if index != -1:
-            self.gp_combo.setCurrentIndex(index)
-        else:
-            self.gp_combo.setCurrentIndex(0)
-
-        self.gp_cooldown_spin.setValue(self.player_data.get("guardian_power_cooldown", 0.0))
-
-        # Outer Metadata loading
-        if self.root_save:
-            self.used_cheats_check.setChecked(self.root_save.get("used_cheats", False))
+        power = data.get("guardian_power", "")
+        with QSignalBlocker(self.gp_combo):
+            if self.gp_combo.count() > len(GUARDIAN_POWERS):
+                self.gp_combo.removeItem(len(GUARDIAN_POWERS))
+            if self.gp_combo.findData(power) == -1:
+                self.gp_combo.addItem(f"Unlisted power ({power})", power)
+            self.gp_combo.setCurrentIndex(self.gp_combo.findData(power))
+        self.used_cheats_check.setChecked((root_save or {}).get("used_cheats", False))
 
     def add_food_row(self, name="Bread", time=1200.0):
-        if self.food_table.rowCount() >= 3:
-            # dont try to add more than 3 foods, klinoff snore. klinoff is scared to eat more than 3 foods at once, so we should respect that.
-            return
-            
-        row = self.food_table.rowCount()
-        self.food_table.insertRow(row)
+        if self.food_table.rowCount() < 3:
+            self.insert_food_record({"name": name, "time": time})
+            self.update_food_buttons()
 
-        name_item = QTableWidgetItem(name)
-        self.food_table.setItem(row, 0, name_item)
+    def insert_food_record(self, food):
+        row = self.food_table.rowCount()
+        self.food_records.append(food)
+        with QSignalBlocker(self.food_table):
+            self.food_table.insertRow(row)
+            self.food_table.setItem(row, 0, QTableWidgetItem(food.get("name", "")))
 
         time_spin = QDoubleSpinBox()
         time_spin.setRange(0.0, 99999.0)
-        time_spin.setValue(time)
+        time_spin.setValue(food.get("time", 1200.0))
+        time_spin.valueChanged.connect(lambda value: food.update(time=value))
         self.food_table.setCellWidget(row, 1, time_spin)
-        self.update_food_buttons()
+
+    def edit_food_name(self, item):
+        self.food_records[item.row()]["name"] = item.text().strip()
 
     def remove_selected_food(self):
         current_row = self.food_table.currentRow()
         if current_row >= 0:
+            del self.food_records[current_row]
             self.food_table.removeRow(current_row)
         self.update_food_buttons()
 
@@ -188,31 +199,7 @@ class StatsTab(QWidget):
         if not self.player_data:
             return
 
-        # Apply Vitals
-        self.player_data["max_health"] = self.max_health_spin.value()
-        self.player_data["health"] = self.health_spin.value()
-        self.player_data["max_stamina"] = self.max_stamina_spin.value()
-        self.player_data["stamina"] = self.stamina_spin.value()
-        self.player_data["max_eitr"] = self.max_eitr_spin.value()
-        self.player_data["eitr"] = self.eitr_spin.value()
-
-        # Apply Foods
-        updated_foods = []
-        for row in range(self.food_table.rowCount()):
-            name_item = self.food_table.item(row, 0)
-            time_widget = self.food_table.cellWidget(row, 1)
-            
-            if name_item and isinstance(time_widget, QDoubleSpinBox):
-                updated_foods.append({
-                    "name": name_item.text().strip(),
-                    "time": time_widget.value()
-                })
-        self.player_data["foods"] = updated_foods
-
-        # Apply Guardian Power
-        self.player_data["guardian_power"] = self.gp_combo.currentData()
-        self.player_data["guardian_power_cooldown"] = self.gp_cooldown_spin.value()
-
-        # Apply Outer Flags
+        self.player_data.update(self.edits)
+        self.player_data["foods"] = [dict(food) for food in self.food_records]
         if self.root_save:
             self.root_save["used_cheats"] = self.used_cheats_check.isChecked()

@@ -3,17 +3,25 @@ import json
 GRID_WIDTH = 8
 DEFAULT_GRID_HEIGHT = 4
 
-MIN_STACK = 1
-MAX_STACK = 9999
+MIN_STACK = 0
+MAX_STACK = 65535
 
-MIN_QUALITY = 1
-MAX_QUALITY = 99
+MIN_QUALITY = 0
+MAX_QUALITY = 65535
 
-MIN_VARIANT = 0
-MAX_VARIANT = 99
+MIN_VARIANT = -(2**31)
+MAX_VARIANT = 2**31 - 1
 
-MIN_DURABILITY = 0.0
-MAX_DURABILITY = 99999.0
+MIN_DURABILITY = -(2**31) / 100
+MAX_DURABILITY = (2**31 - 1) / 100
+
+# Retain the narrower editing limits for recognized equipment slots.
+EQUIPMENT_PROPERTY_LIMITS = {
+    "stack": (1, 9999),
+    "quality": (1, 99),
+    "variant": (0, 99),
+    "durability": (0.0, 99999.0),
+}
 
 
 def validate_item(item, player_data=None, *, inventory_rows=None, allow_hash_only=False):

@@ -1,3 +1,4 @@
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
     QWidget,
     QFormLayout,
@@ -19,6 +20,7 @@ class AppearanceTab(QWidget):
     def __init__(self):
         super().__init__()
         self.player_data = None
+        self.edits = {}
 
         main_layout = detail_layout(self, scroll=True)
 
@@ -40,7 +42,7 @@ class AppearanceTab(QWidget):
         for beard_id, beard_name in VALHEIM_BEARDS.items():
             self.beard_combo.addItem(beard_name, beard_id)
 
-        style_layout.addRow("Gender Model:", self.model_combo)
+        style_layout.addRow("Character Model:", self.model_combo)
         style_layout.addRow("Hair Style:", self.hair_combo)
         style_layout.addRow("Beard Style:", self.beard_combo)
         main_layout.addWidget(style_group)
@@ -86,55 +88,50 @@ class AppearanceTab(QWidget):
         self.btn_skin_color.clicked.connect(self.choose_skin_color)
         self.btn_hair_color.clicked.connect(self.choose_hair_color)
 
-        # no female beard, klinoff is questioning?
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
+        for field, combo in (("model_index", self.model_combo), ("hair", self.hair_combo),
+                             ("beard", self.beard_combo)):
+            combo.currentIndexChanged.connect(
+                lambda _, key=field, selector=combo: self.edits.update({key: selector.currentData()})
+            )
         polish_forms(self)
         self.update_color_preview(self.skin_preview, self.current_skin_rgb)
         self.update_color_preview(self.hair_preview, self.current_hair_rgb)
 
-    def on_model_changed(self, index):
+    def on_model_changed(self):
         selected_model = self.model_combo.currentData()
         # no beard for female model (1), disable beard combo
         self.beard_combo.setEnabled(selected_model == 0)
 
     def load_data(self, player_data):
         self.player_data = player_data
-        if not self.player_data:
-            return
+        self.edits.clear()
+        data = player_data or {}
+        for field, combo, count in (("model_index", self.model_combo, 2),
+                                    ("hair", self.hair_combo, len(VALHEIM_HAIRS)),
+                                    ("beard", self.beard_combo, len(VALHEIM_BEARDS))):
+            with QSignalBlocker(combo):
+                if combo.count() > count:
+                    combo.removeItem(count)
+                value = data.get(field, combo.itemData(0))
+                if combo.findData(value) == -1:
+                    label = f"Unlisted model ({value})" if field == "model_index" else value
+                    combo.addItem(label, value)
+                combo.setCurrentIndex(combo.findData(value))
+        self.on_model_changed()
 
-        # 1. Model index
-        model_idx = self.player_data.get("model_index", 0)
-        index = self.model_combo.findData(model_idx)
-        if index != -1:
-            self.model_combo.setCurrentIndex(index)
-        self.beard_combo.setEnabled(model_idx == 0)
-
-        # 2. Hair and Beard styles
-        for field, combo, styles in (("hair", self.hair_combo, VALHEIM_HAIRS),
-                                     ("beard", self.beard_combo, VALHEIM_BEARDS)):
-            if combo.count() > len(styles):
-                combo.removeItem(len(styles))  # Custom style from the previous character.
-            style = player_data.get(field, combo.itemData(0))
-            if style not in styles:
-                combo.addItem(style, style)
-            combo.setCurrentIndex(combo.findData(style))
-
-        # 3. Colors (0.0 - 1.0 floats to 0 - 255 ints)
-        self.current_skin_rgb = self.player_data.get("skin_color", [1.0, 1.0, 1.0])
-        self.current_hair_rgb = self.player_data.get("hair_color", [1.0, 1.0, 1.0])
+        self.current_skin_rgb = data.get("skin_color", [1.0, 1.0, 1.0])
+        self.current_hair_rgb = data.get("hair_color", [1.0, 1.0, 1.0])
 
         self.update_color_preview(self.skin_preview, self.current_skin_rgb)
         self.update_color_preview(self.hair_preview, self.current_hair_rgb)
 
     def update_color_preview(self, widget, rgb_list):
-        r = int(max(0.0, min(1.0, rgb_list[0])) * 255)
-        g = int(max(0.0, min(1.0, rgb_list[1])) * 255)
-        b = int(max(0.0, min(1.0, rgb_list[2])) * 255)
-        
+        color = self.display_color(rgb_list)
+        r, g, b, _ = color.getRgb()
         palette = widget.palette()
-        palette.setColor(QPalette.Window, QColor(r, g, b))
+        palette.setColor(QPalette.Window, color)
         widget.setPalette(palette)
-        color = QColor(r, g, b)
         set_themed_style(
             widget,
             f"background-color: {color.name()}; border: 1px solid @border@; border-radius: 8px;"
@@ -142,32 +139,28 @@ class AppearanceTab(QWidget):
         label = self.skin_color_label if widget is self.skin_preview else self.hair_color_label
         label.setText(f"{color.name().upper()}   ·   RGB {r}, {g}, {b}")
 
+    @staticmethod
+    def display_color(rgb):
+        return QColor(*(int(max(0.0, min(1.0, channel)) * 255) for channel in rgb))
+
     def choose_skin_color(self):
-        r = int(self.current_skin_rgb[0] * 255)
-        g = int(self.current_skin_rgb[1] * 255)
-        b = int(self.current_skin_rgb[2] * 255)
-        
-        color = QColorDialog.getColor(QColor(r, g, b), self, "Select Skin Color")
-        if color.isValid():
+        initial = self.display_color(self.current_skin_rgb)
+        color = QColorDialog.getColor(initial, self, "Select Skin Color")
+        if color.isValid() and color != initial:
             self.current_skin_rgb = [color.red() / 255.0, color.green() / 255.0, color.blue() / 255.0]
+            self.edits["skin_color"] = self.current_skin_rgb
             self.update_color_preview(self.skin_preview, self.current_skin_rgb)
 
     def choose_hair_color(self):
-        r = int(self.current_hair_rgb[0] * 255)
-        g = int(self.current_hair_rgb[1] * 255)
-        b = int(self.current_hair_rgb[2] * 255)
-        
-        color = QColorDialog.getColor(QColor(r, g, b), self, "Select Hair/Beard Color")
-        if color.isValid():
+        initial = self.display_color(self.current_hair_rgb)
+        color = QColorDialog.getColor(initial, self, "Select Hair/Beard Color")
+        if color.isValid() and color != initial:
             self.current_hair_rgb = [color.red() / 255.0, color.green() / 255.0, color.blue() / 255.0]
+            self.edits["hair_color"] = self.current_hair_rgb
             self.update_color_preview(self.hair_preview, self.current_hair_rgb)
 
     def save_changes(self):
         if not self.player_data:
             return
 
-        self.player_data["model_index"] = self.model_combo.currentData()
-        self.player_data["hair"] = self.hair_combo.currentData()
-        self.player_data["beard"] = self.beard_combo.currentData()
-        self.player_data["skin_color"] = self.current_skin_rgb
-        self.player_data["hair_color"] = self.current_hair_rgb
+        self.player_data.update(self.edits)

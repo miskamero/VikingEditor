@@ -338,7 +338,7 @@ class InventoryTests(QtTestCase):
                 return QDialog.Accepted
             dialog.exec.side_effect = switch_save
             self.tab.add_item_to_slot(slot)
-            dialog.get_updated_data.assert_not_called()
+            dialog.get_changes.assert_not_called()
             dialog.deleteLater.assert_called_once()
         self.assertEqual(replacement["inventory"], [])
 
