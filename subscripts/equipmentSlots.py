@@ -11,11 +11,21 @@ from subscripts.fchUtil import BinaryReader
 
 
 EAQ_EQUIPMENT = ("Helmet", "Chest", "Legs", "Shoulder", "Utility", "Trinket", "Utility2", "Utility3")
+OTHER_SLOT_KEYS = ("ExtraSlots", "EquipmentSlotInventory", "QuickSlotInventory", "ExtendedPlayerData")
+SLOT_KEYS = ("eaqs_", *OTHER_SLOT_KEYS)
 
 
 def _metadata(item):
     value = item.get("custom_data", {})
     return value if isinstance(value, dict) else {}
+
+
+def _has_keys(values, prefixes):
+    return isinstance(values, dict) and any(str(key).removeprefix("<|>").startswith(prefixes) for key in values)
+
+
+def item_has_slot_mod_data(item):
+    return _has_keys(_metadata(item), SLOT_KEYS)
 
 
 def has_slot_mod_data(data):
@@ -24,13 +34,8 @@ def has_slot_mod_data(data):
     Return-slot memory does not prove a layout or an active mod. Keep the
     protection: mods can also put real slots inside the usual vanilla grid.
     """
-    keys = ("eaqs_", "ExtraSlots", "EquipmentSlotInventory", "QuickSlotInventory", "ExtendedPlayerData")
-    for field in ("custom_data", "known_texts"):
-        values = data.get(field, {})
-        if isinstance(values, dict) and any(str(key).removeprefix("<|>").startswith(keys) for key in values):
-            return True
-    return any(any(str(key).startswith(("eaqs_", "ExtraSlots")) for key in _metadata(item))
-               for item in data.get("inventory", []))
+    return (any(_has_keys(data.get(field, {}), SLOT_KEYS) for field in ("custom_data", "known_texts"))
+            or any(item_has_slot_mod_data(item) for item in data.get("inventory", [])))
 
 
 def eaq_inventory_rows(data):
@@ -39,14 +44,8 @@ def eaq_inventory_rows(data):
     if not isinstance(custom, dict):
         return None
     # Conflicting mod storage cannot establish which topology currently owns a cell.
-    for field in (custom, data.get("known_texts", {})):
-        if isinstance(field, dict) and any(
-                str(key).removeprefix("<|>").startswith(
-                    ("ExtraSlots", "EquipmentSlotInventory", "QuickSlotInventory", "ExtendedPlayerData"))
-                for key in field):
-            return None
-    if any(any(str(key).startswith("ExtraSlots") for key in _metadata(item))
-           for item in data.get("inventory", [])):
+    if (any(_has_keys(field, OTHER_SLOT_KEYS) for field in (custom, data.get("known_texts", {})))
+            or any(_has_keys(_metadata(item), OTHER_SLOT_KEYS) for item in data.get("inventory", []))):
         return None
     try:
         row_text = custom["eaqs_visible_rows"]
@@ -92,7 +91,7 @@ def eaq_equipment(data, root_save):
         slot_id = EAQ_EQUIPMENT[x]  # Upstream indices 8..15, width 8.
         if (metadata.get("eaqs_player") != str(root_save["player_id"])
                 or metadata.get("eaqs_slot") != slot_id
-                or any(str(key).startswith("ExtraSlots") for key in metadata)):
+                or _has_keys(metadata, OTHER_SLOT_KEYS)):
             continue
         found.append((slot_id, item))
     return sorted(found, key=lambda entry: entry[1]["grid_x"])

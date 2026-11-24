@@ -150,6 +150,9 @@ class InventorySlot(QToolButton):
             background: @empty@; border: 1px solid @divider@; color: transparent;
         }
         QToolButton[slotState="equipped"] { background: @selection@; border-color: @hoverBorder@; }
+        QToolButton[slotState="restricted"] {
+            background: @warningSurface@; color: @warningText@; border-color: @warningText@;
+        }
         QToolButton:enabled:hover { background: @hover@; border: 1px solid @hoverBorder@; color: @accentText@; }
         QToolButton:enabled:focus { border: 2px solid @focus@; color: @accentText@; }
         QToolButton:enabled:pressed { background: @pressed@; }
@@ -167,6 +170,7 @@ class InventorySlot(QToolButton):
         self.grid_x = x
         self.grid_y = y
         self.item_data = None
+        self.restriction = None
         self._display_name = ""
         self._icon = QPixmap()
         self._icon_size = 0
@@ -282,6 +286,12 @@ class InventorySlot(QToolButton):
 
     def set_item(self, item_data):
         self.item_data = item_data
+        self.restriction = None
+        self.update_visuals()
+
+    def set_restricted(self, label, details):
+        self.item_data = None
+        self.restriction = (label, details)
         self.update_visuals()
 
     def clear_item(self):
@@ -291,7 +301,7 @@ class InventorySlot(QToolButton):
         item = self.item_data or {}
         equipped = item.get("equipped", False)
         cheated = item.get("cheated", False)
-        state = "equipped" if equipped else "occupied" if item else "empty"
+        state = "restricted" if self.restriction else "equipped" if equipped else "occupied" if item else "empty"
         if self.property("slotState") != state:
             self.setProperty("slotState", state)
             self.style().unpolish(self)
@@ -308,9 +318,16 @@ class InventorySlot(QToolButton):
             for label in (self.icon_label, self.name_label, self.stack_label, self.quality_label):
                 label.clear()
                 label.hide()
-            self.setToolTip("Empty slot — click to add an item.")
-            self.setAccessibleName(f"Empty slot, column {self.grid_x + 1}, row {self.grid_y + 1}")
-            self.setAccessibleDescription("")
+            if self.restriction:
+                label, details = self.restriction
+                self.setText(label)
+                self.setToolTip(details)
+                self.setAccessibleName(f"{label} at ({self.grid_x}, {self.grid_y})")
+                self.setAccessibleDescription(details)
+            else:
+                self.setToolTip("Empty slot — click to add an item.")
+                self.setAccessibleName(f"Empty slot, column {self.grid_x + 1}, row {self.grid_y + 1}")
+                self.setAccessibleDescription("")
             return
 
         prefab = item.get("prefab") or ""

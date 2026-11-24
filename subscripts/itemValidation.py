@@ -1,7 +1,6 @@
 import json
 
-GRID_WIDTH = 8
-DEFAULT_GRID_HEIGHT = 4
+from subscripts.inventoryLayout import GRID_WIDTH, DEFAULT_GRID_HEIGHT, effective_inventory_rows
 
 MIN_STACK = 0
 MAX_STACK = 65535
@@ -75,21 +74,13 @@ def validate_item(item, player_data=None, *, inventory_rows=None, allow_hash_onl
         )
 
     if inventory_rows is None:
-        inventory_rows = DEFAULT_GRID_HEIGHT
-    if player_data:
-        uniques = player_data.get("uniques", [])
-
-        if "invrows 6" in uniques:
-            inventory_rows = 6
-        elif "invrows 5" in uniques:
-            inventory_rows = 5
+        inventory_rows = effective_inventory_rows(player_data.get("uniques", [])) if player_data else DEFAULT_GRID_HEIGHT
 
     if not isinstance(grid_y, int) or isinstance(grid_y, bool):
         errors.append("Grid Y must be an integer.")
     elif not 0 <= grid_y < inventory_rows:
-        errors.append(
-            f"Grid Y must be between 0 and {inventory_rows - 1}."
-        )
+        errors.append(f"Grid Y must be between 0 and {inventory_rows - 1}."
+                      if inventory_rows else "The inventory has no playable rows.")
 
     # Quality
     quality = item.get("quality", 1)

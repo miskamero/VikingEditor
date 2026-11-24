@@ -705,7 +705,8 @@ class MainWindow(QMainWindow):
             # 1. collect all changes from the active tabs
             if not self.character_tab.save_changes():
                 return
-            self.inventory_tab.save_changes()
+            if not self.inventory_tab.save_changes():
+                return
             self.skills_tab.save_changes()
             self.stats_tab.save_changes()
             self.appearance_tab.save_changes()

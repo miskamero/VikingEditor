@@ -196,6 +196,8 @@ class InventoryTests(QtTestCase):
         self.assertEqual(self.app.palette().color(QPalette.Window), light_palette)
 
     def test_pockets_extend_the_grid_without_resizing_existing_slots(self):
+        self.data["inventory"][2]["grid_y"] = 4
+        self.tab.load_data(self.data)
         self.tab.resize(820, 520)
         self.tab.show()
         self.app.processEvents()
@@ -344,6 +346,8 @@ class InventoryTests(QtTestCase):
 
     def test_removed_slots_are_deleted_on_qt_event_loop(self):
         from shiboken6 import isValid
+        self.data["inventory"].pop()
+        self.tab.load_data(self.data)
         self.tab.deeper_pockets_checkbox.setChecked(True)
         removed = self.tab.slots[(0, 5)]
         self.tab.wider_pockets_checkbox.setChecked(False)
@@ -383,15 +387,22 @@ class InventoryTests(QtTestCase):
 
     def test_expansion_preserves_unrelated_discoveries(self):
         self.data["uniques"] = ["defeated_eikthyr", "invrows 5", "invslot1"]
+        self.tab.load_data(self.data)
         self.tab.deeper_pockets_checkbox.setChecked(True)
         self.tab.save_changes()
         self.assertEqual(len(self.tab.slots), 48)
         self.assertIn("defeated_eikthyr", self.data["uniques"])
         self.assertIn("invrows 6", self.data["uniques"])
+        with patch.object(self.tab, "show_resize_blockers") as blocked:
+            self.tab.wider_pockets_checkbox.setChecked(False)
+        blocked.assert_called_once_with(4, [(3, self.data["inventory"][2])])
+        self.assertEqual(len(self.tab.slots), 48)
+        self.question.return_value = QMessageBox.Yes
+        self.tab.remove_slot_item(self.tab.slots[0, 5])
         self.tab.wider_pockets_checkbox.setChecked(False)
         self.tab.save_changes()
         self.assertEqual(self.data["uniques"], ["defeated_eikthyr"])
-        self.assertEqual(len(self.data["inventory"]), 3)
+        self.assertEqual(len(self.data["inventory"]), 2)
 
 
 class StatsTests(QtTestCase):
