@@ -4,11 +4,12 @@ import io
 import json
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog
 
-from tests.support import item, playerDataUtil as player
+from tests.support import WOOD_PREFAB_HASH, item, playerDataUtil as player
 from tests.test_editor import QtTestCase
 from subscripts.fchUtil import compile_fch, decompile_fch
 from ui.inventoryTab import InventoryTab
@@ -114,7 +115,7 @@ class CrafterTests(QtTestCase):
             raise errors[0]
 
     def test_inventory_edit_and_remove_persist_in_character_file(self):
-        original = item(crafter_id=9007199254740993, crafter_name="Original",
+        original = item(prefab_hash=WOOD_PREFAB_HASH, crafter_id=9007199254740993, crafter_name="Original",
                         custom_data={"note": "keep"}, cheated=True)
         self.data["inventory"] = [original]
         tab = self.widget(InventoryTab)
@@ -138,10 +139,15 @@ class CrafterTests(QtTestCase):
                     target = Path(directory) / "character.fch"
                     source.write_text(json.dumps(self.root), encoding="utf-8")
                     compile_fch(str(source), str(target))
-                    loaded = player.unpack_player_data_hex(decompile_fch(str(target))["player_data_hex"])
+                    payload = decompile_fch(str(target))["player_data_hex"]
+                loaded, = player.unpack_player_data_hex(payload)["inventory"]
                 for key, value in expected.items():
-                    self.assertEqual(loaded["inventory"][0][key], value, key)
-                reopened = self.widget(ItemEditDialog, loaded["inventory"][0])
+                    self.assertEqual(loaded[key], value, key)
+                with patch.dict(player.ITEM_HASH_TO_PREFAB, {}, clear=True):
+                    offline = player.unpack_player_data_hex(payload)
+                    self.assertEqual(offline["inventory"], [dict(loaded, prefab="")])
+                    self.assertEqual(player.pack_player_data_hex(offline), payload)
+                reopened = self.widget(ItemEditDialog, loaded)
                 self.assertEqual(reopened.crafter_group.isChecked(), not remove)
                 self.assertEqual(reopened.crafter_name_input.text(), expected["crafter_name"])
 

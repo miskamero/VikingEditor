@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tests.support import ITEMS, item, create_empty_player_data, create_new_character
+from tests.support import ITEMS, item, create_empty_player_data, create_new_character, playerDataUtil
 from subscripts.fchUtil import compile_fch, decompile_fch
 from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
@@ -40,6 +40,9 @@ class QtTestCase(unittest.TestCase):
         database = patch("ui.itemSearchWidget.load_item_database", return_value=ITEMS)
         database.start()
         self.addCleanup(database.stop)
+        decoder_catalog = patch.dict(playerDataUtil.ITEM_HASH_TO_PREFAB, ITEMS, clear=True)
+        decoder_catalog.start()
+        self.addCleanup(decoder_catalog.stop)
         icons = patch("ui.inventorySlot.get_item_icon_path", return_value=None)
         icons.start()
         self.addCleanup(icons.stop)
