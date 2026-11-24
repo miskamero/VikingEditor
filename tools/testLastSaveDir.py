@@ -20,7 +20,8 @@ from ui.valheim_detection import DEFAULT_CONFIG, get_valheim_character_save_dire
 last_save_dir = MainWindow.last_save_dir
 remember_save_dir = MainWindow.remember_save_dir
 
-fallback = str(get_valheim_character_save_directory())
+local = get_valheim_character_save_directory()
+fallback = str(next((path for path in (local, *local.parents) if path.is_dir()), Path.home()))
 
 # No remembered directory yet -> fall back to the detected save directory.
 assert last_save_dir(SimpleNamespace(config=DEFAULT_CONFIG.copy())) == fallback

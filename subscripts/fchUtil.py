@@ -5,6 +5,9 @@ import json
 import struct
 import io
 import hashlib
+import stat
+from dataclasses import dataclass
+from pathlib import Path
 
 # binary read and write utils
 
@@ -215,9 +218,11 @@ def verified_payload(file_bytes: bytes, *, for_editing=False) -> bytes:
 def decompile_fch(fch_path: str) -> dict:
     print(f"Reading binary save: {fch_path}")
     with open(fch_path, "rb") as f:
-        zpackage_bytes = verified_payload(f.read(), for_editing=True)
+        return parse_fch(f.read())
 
-    pkg = BinaryReader(zpackage_bytes)
+
+def parse_fch(contents: bytes) -> dict:
+    pkg = BinaryReader(verified_payload(contents, for_editing=True))
 
     save_data = {}
 
@@ -379,7 +384,13 @@ def compile_fch(json_path: str, fch_path: str):
     write_fch(save_data, fch_path)
 
 
-def write_fch(save_data: dict, fch_path: str):
+_UNINSPECTED = object()
+
+
+def write_fch(save_data: dict, fch_path: str, *, destination=_UNINSPECTED):
+    if destination is _UNINSPECTED:
+        destination = read_file_snapshot(fch_path)
+
     pkg = BinaryWriter()
 
     # Preserve existing saves' version; legacy JSON without a version used v46.
@@ -687,14 +698,85 @@ def write_fch(save_data: dict, fch_path: str):
         calculated_hash
     )
 
-    if os.path.exists(fch_path):
-        # Recheck the destination: it may have changed since opening the editor.
-        decompile_fch(fch_path)
-    atomic_write(fch_path, file_writer.get_bytes())
+    if destination is not None:
+        parse_fch(destination.contents)
+    revision = atomic_write(fch_path, file_writer.get_bytes(), destination)
     print(f"Successfully compiled and hashed! File created at: {fch_path}")
+    return revision
 
 
-def atomic_write(fch_path, contents):
+class RevisionConflict(OSError):
+    def __init__(self, path):
+        super().__init__(f"The file was changed, replaced, or removed externally.\n\n{path}")
+
+
+@dataclass(frozen=True)
+class FileRevision:
+    digest: str
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    contents: bytes
+    revision: FileRevision
+
+
+def regular_file(info):
+    return stat.S_ISREG(info.st_mode) and not (
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _read_stamp(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _revision(contents, info):
+    return FileRevision(hashlib.sha256(contents).hexdigest(), info.st_dev, info.st_ino)
+
+
+def read_file_snapshot(path):
+    """Read one regular file revision, or return None for an unoccupied path."""
+    path = Path(path)
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not regular_file(entry):
+        raise ValueError(f"Expected a regular file at {path}.")
+    try:
+        with path.open("rb") as source:
+            before = os.fstat(source.fileno())
+            if _read_stamp(entry) != _read_stamp(before):
+                raise RevisionConflict(path)
+            contents = source.read()
+            after = os.fstat(source.fileno())
+        entry = path.lstat()
+    except FileNotFoundError as exc:
+        raise RevisionConflict(path) from exc
+    if not regular_file(entry) or not (_read_stamp(before) == _read_stamp(after) == _read_stamp(entry)):
+        raise RevisionConflict(path)
+    return FileSnapshot(contents, _revision(contents, after))
+
+
+def require_revision(path, snapshot, expected):
+    current = snapshot.revision if snapshot is not None else None
+    if current != expected:
+        raise RevisionConflict(path)
+
+
+def require_destination_revision(path, expected):
+    try:
+        snapshot = read_file_snapshot(path)
+    except ValueError as exc:
+        raise RevisionConflict(path) from exc
+    require_revision(path, snapshot, expected)
+    return snapshot
+
+
+def atomic_write(fch_path, contents, destination):
     # Finish writing on the same filesystem before replacing an existing character.
     output = tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(fch_path)), delete=False)
     temporary_path = output.name
@@ -703,10 +785,23 @@ def atomic_write(fch_path, contents):
             output.write(contents)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary_path, fch_path)
+        revision = _revision(contents, os.stat(temporary_path))
+        if destination is None:
+            # Publish a complete file only if the name is still vacant.
+            try:
+                if os.name == "nt":
+                    os.rename(temporary_path, fch_path)
+                else:
+                    os.link(temporary_path, fch_path)
+            except FileExistsError as exc:
+                raise RevisionConflict(fch_path) from exc
+        else:
+            # Neither POSIX rename nor Windows MoveFileEx offers compare-and-replace.
+            require_destination_revision(fch_path, destination.revision)
+            os.replace(temporary_path, fch_path)
+        return revision
     finally:
-        if os.path.exists(temporary_path):
-            os.unlink(temporary_path)
+        Path(temporary_path).unlink(missing_ok=True)
 
 # CLI, klinoff likey
 if __name__ == "__main__":

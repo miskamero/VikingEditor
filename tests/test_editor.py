@@ -99,11 +99,15 @@ class MainWindowTests(QtTestCase):
             write_fch(self.root, source)
             self.assertTrue(window.load_file(str(source)))
             self.assertTrue(window.btn_save_save.isEnabled())
-            with patch("ui.mainWindow.decompile_fch", return_value={}), patch.object(QMessageBox, "critical"):
-                self.assertFalse(window.load_file("empty.fch"))
+            empty = Path(directory) / "empty.fch"
+            write_fch(dict(self.root, player_data_hex=None), empty)
+            with patch.object(QMessageBox, "critical"):
+                self.assertFalse(window.load_file(str(empty)))
             self.assertEqual(window.current_fch, str(source))
+            self.assertIsNotNone(window.current_revision)
             self.assertTrue(window.load_file(source, backup=True))
             self.assertIsNone(window.current_fch)
+            self.assertIsNone(window.current_revision)
             with patch("ui.mainWindow.QFileDialog.getSaveFileName", return_value=(str(target), "")):
                 window.save_save_file()
             self.assertEqual(window.current_fch, str(target))
@@ -112,7 +116,7 @@ class MainWindowTests(QtTestCase):
             with patch("subscripts.fchUtil.os.replace", side_effect=OSError), self.assertRaises(OSError):
                 write_fch(self.root, target)
             self.assertEqual(target.read_bytes(), before)
-            self.assertEqual(set(Path(directory).iterdir()), {source, target})
+            self.assertEqual(set(Path(directory).iterdir()), {source, target, empty})
 
 
 class InventoryTests(QtTestCase):

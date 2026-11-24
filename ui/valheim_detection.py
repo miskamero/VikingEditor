@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import psutil
 import json
@@ -255,30 +256,28 @@ def load_saved_valheim_path() -> Optional[Path]:
     return Path(path)
 
 
-def get_valheim_character_save_directory() -> Path:
-    userprofile = os.environ.get("USERPROFILE")
+def is_steam_cloud_path(path: Path) -> bool:
+    for candidate in (path.absolute(), path.resolve()):
+        parts = tuple(part.lower() for part in candidate.parts)
+        if any(parts[i] == "userdata" and parts[i + 2:i + 4] == ("892970", "remote")
+               for i in range(len(parts) - 3)):
+            return True
+    return False
 
-    if userprofile:
-        return (
-            Path(userprofile)
-            / "AppData"
-            / "LocalLow"
-            / "IronGate"
-            / "Valheim"
-            / "characters"
-        )
 
-    # Linux: the Proton prefix keeps local saves, but Steam Cloud
-    # mirrors them into userdata/<steam-id>/892970/remote.
-    for steam_path in get_steam_installations():
-        for remote in sorted(
-            steam_path.glob("userdata/*/892970/remote/characters")
-        ):
-            return remote
+def get_valheim_character_save_directory(*, legacy=False) -> Path:
+    folder = "characters" if legacy else "characters_local"
+    windows_data = Path("AppData") / "LocalLow" / "IronGate" / "Valheim"
+    if sys.platform == "win32":
+        return Path(os.environ.get("USERPROFILE") or Path.home()) / windows_data / folder
 
-    return (
-        Path.home()
-        / ".local" / "share" / "Steam" / "steamapps" / "compatdata"
-        / "892970" / "pfx" / "drive_c" / "users" / "steamuser"
-        / "AppData" / "LocalLow" / "IronGate" / "Valheim" / "characters"
-    )
+    native = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    native = native / "unity3d" / "IronGate" / "Valheim"
+    bases = [native]
+    for steam in get_steam_installations():
+        for library in [steam, *parse_steam_library_paths(steam)]:
+            prefix = library / "steamapps" / "compatdata" / "892970" / "pfx"
+            bases.append(prefix / "drive_c" / "users" / "steamuser" / windows_data)
+
+    return next((base / folder for base in bases if (base / folder).is_dir()),
+                next((base / folder for base in bases if base.is_dir()), native / folder))

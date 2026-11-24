@@ -30,13 +30,21 @@ from ui.valheim_detection import (
     load_saved_valheim_path,
     load_config,
     save_config,
-    get_valheim_character_save_directory
+    get_valheim_character_save_directory,
+    is_steam_cloud_path,
 )
 
 from subscripts.fchUtil import (
-    decompile_fch,
+    parse_fch,
+    read_file_snapshot,
+    require_destination_revision,
+    require_revision,
+    RevisionConflict,
     verified_payload,
     write_fch
+)
+from subscripts.backupOwnership import (
+    VALHEIM_SAVE_FOLDERS, managed_backups, plain_directory, remove_owned_backup, write_backup,
 )
 
 from subscripts.newCharacter import (
@@ -107,6 +115,7 @@ class MainWindow(QMainWindow):
         self.root_save = None       # Container data (.fch level dict)
         self.player_data = None     # Decoded character attributes dict
         self.current_fch = None
+        self.current_revision = None
         self.loaded_backup = False
 
         self.setWindowTitle("Viking Editor")
@@ -221,8 +230,10 @@ class MainWindow(QMainWindow):
 
         return editor_dir / "backups"
 
-    def create_backup(self, filename, character_name=None, *, allow_damaged=False):
+    def create_backup(self, filename, character_name=None, *, allow_damaged=False, snapshot=None):
         backup_root = self.get_backup_directory()
+        if is_steam_cloud_path(backup_root):
+            raise ValueError("Choose a backup directory outside Steam Cloud storage.")
 
         if character_name is None:
             character_name = self.root_save.get("character_name", "Viking").strip()
@@ -233,34 +244,32 @@ class MainWindow(QMainWindow):
         if character_name in (".", "..") or Path(character_name).name != character_name:
             raise ValueError("Character name cannot be used as a backup folder.")
 
-        character_backup_dir = backup_root / character_name
+        # A shared root may be the Valheim data directory itself.
+        group = f"Backup - {character_name}" if character_name.lower() in VALHEIM_SAVE_FOLDERS else character_name
+        character_backup_dir = backup_root / group
         character_backup_dir.mkdir(
             parents=True,
             exist_ok=True
         )
+        if not plain_directory(character_backup_dir):
+            raise ValueError("The character backup directory must be a regular directory.")
 
         timestamp = datetime.now().strftime(
             "%Y-%m-%d_%H%M%S%f"
         )
 
         backup_filename = (
-            f"{character_name}_{timestamp}.fch"
+            f"{group}_{timestamp}.fch"
         )
 
         backup_path = character_backup_dir / backup_filename
 
-        contents = Path(filename).read_bytes()
+        snapshot = snapshot if snapshot is not None else read_file_snapshot(filename)
+        if snapshot is None:
+            raise RevisionConflict(filename)
         if not allow_damaged:
-            verified_payload(contents)
-        output = backup_path.open("xb")
-        try:
-            with output:
-                output.write(contents)
-                output.flush()
-                os.fsync(output.fileno())
-        except OSError:
-            backup_path.unlink()
-            raise
+            verified_payload(snapshot.contents)
+        write_backup(backup_path, snapshot.contents, Path(filename).name)
 
         return backup_path
 
@@ -275,27 +284,27 @@ class MainWindow(QMainWindow):
         if max_backups == 0:
             return
 
-        backup_dir = self.get_backup_directory() / character_name
-
-        if not backup_dir.is_dir():
-            return
-
+        root = self.get_backup_directory()
+        if is_steam_cloud_path(root):
+            raise ValueError("Steam Cloud storage cannot be used for backup retention.")
         backups = sorted(
-            backup_dir.glob("*.fch"),
-            key=lambda path: path.stat().st_mtime,
+            managed_backups(root, root / character_name),
+            key=lambda backup: backup[0].stat().st_mtime_ns,
             reverse=True
         )
 
-        for old_backup in backups[max_backups:]:
+        for old_backup, revision in backups[max_backups:]:
             if old_backup.resolve() not in protected:
-                old_backup.unlink()
+                remove_owned_backup(root, old_backup, revision)
 
-    def backup_summary(self, backups, destination):
+    def backup_summary(self, backups, destination, *, source=None):
         if not backups:
             return "No backup was created."
         message = "Recovery copies:\n" + "\n".join(map(str, backups))
         protected = {path.resolve() for path in backups}
         protected.add(Path(destination).resolve())
+        if source is not None:
+            protected.add(Path(source).resolve())
         for directory in {backup.parent for backup in backups}:
             try:
                 self.cleanup_old_backups(directory.name, protected)
@@ -493,10 +502,11 @@ class MainWindow(QMainWindow):
         self.btn_save_save.setEnabled(False)
         self.tabs.setEnabled(False)
         self.root_save = self.player_data = self.current_fch = None
+        self.current_revision = None
         self.loaded_backup = False
         self.file_label.setText("No file loaded")
 
-    def load_character(self, root, filename=None, backup=False):
+    def load_character(self, root, filename=None, backup=False, *, revision=None):
         payload = root.get("player_data_hex")
         if not payload:
             raise ValueError("This character contains no player data.")
@@ -513,13 +523,19 @@ class MainWindow(QMainWindow):
         self.worlds_tab.load_data(root)
         self.root_save, self.player_data = root, data
         self.current_fch = None if backup else filename
+        self.current_revision = None if backup else revision
         self.loaded_backup = backup
         self.tabs.setEnabled(True)
         self.btn_save_save.setEnabled(True)
 
-    def load_file(self, filename, backup=False):
+    def load_file(self, filename, backup=False, *, expected_revision=None):
         try:
-            self.load_character(decompile_fch(str(filename)), filename, backup)
+            snapshot = read_file_snapshot(filename)
+            if expected_revision is not None:
+                require_revision(filename, snapshot, expected_revision)
+            if snapshot is None:
+                raise FileNotFoundError(filename)
+            self.load_character(parse_fch(snapshot.contents), filename, backup, revision=snapshot.revision)
             kind = "Backup" if backup else "Save"
             self.file_label.setText(
                 f"Loaded {kind}: {Path(filename).name} (Char: {self.root_save.get('character_name')})"
@@ -576,10 +592,11 @@ class MainWindow(QMainWindow):
     def last_save_dir(self) -> str:
         remembered = self.config.get("last_save_dir", "").strip()
 
-        if remembered and Path(remembered).is_dir():
+        if remembered and Path(remembered).is_dir() and not is_steam_cloud_path(Path(remembered)):
             return remembered
 
-        return str(get_valheim_character_save_directory())
+        local = get_valheim_character_save_directory()
+        return str(next((path for path in (local, *local.parents) if path.is_dir()), Path.home()))
 
     def remember_save_dir(self, filename):
         self.config["last_save_dir"] = str(Path(filename).parent)
@@ -665,6 +682,19 @@ class MainWindow(QMainWindow):
                 f"{e}"
             )
 
+    def inspect_save_destination(self, destination):
+        if is_steam_cloud_path(destination):
+            raise ValueError("Choose a save destination outside Steam Cloud storage.")
+        if self.current_fch and destination.resolve() == Path(self.current_fch).resolve():
+            return require_destination_revision(destination, self.current_revision)
+        snapshot = read_file_snapshot(destination)
+        if snapshot and self.current_revision:
+            revision = snapshot.revision
+            current = self.current_revision
+            if revision.inode and (revision.device, revision.inode) == (current.device, current.inode):
+                require_revision(destination, snapshot, current)
+        return snapshot
+
     def save_save_file(self):
         """Packs the active inner data, updates the fch container, and re-compiles the file."""
         if not self.root_save or not self.player_data:
@@ -691,8 +721,8 @@ class MainWindow(QMainWindow):
 
             default_dir = (
                 os.path.dirname(self.current_fch)
-                if getattr(self, "current_fch", None)
-                else ""
+                if self.current_fch and not is_steam_cloud_path(Path(self.current_fch))
+                else self.last_save_dir()
             )
 
             default_save_path = os.path.join(
@@ -700,38 +730,73 @@ class MainWindow(QMainWindow):
                 suggested_filename
             )
 
-            # 3. open save dialog
-            filename, _ = QFileDialog.getSaveFileName(
-                self, 
-                "Compile and Sign Valheim Save", 
-                default_save_path, 
-                "Valheim Character (*.fch)"
-            )
-            if not filename:
-                return
-
             payload = pack_player_data_hex(self.player_data)
-            backups = []
-            destination = Path(filename)
-            source = Path(self.current_fch) if self.current_fch else None
-            if self.config.get("auto_backup", True) and source and source.is_file():
-                backups.append(self.create_backup(source))
-            if destination.exists() and not (source and source.exists() and source.samefile(destination)):
-                backups.append(self.create_backup(destination, destination.stem))
-            write_fch(dict(self.root_save, player_data_hex=payload), filename)
-            self.root_save["player_data_hex"] = payload
-            self.current_fch = filename
-            self.loaded_backup = False
-            self.file_label.setText(f"Saved: {os.path.basename(filename)} (Char: {char_name})")
-            backup_message = self.backup_summary(backups, destination)
+            while True:
+                filename, _ = QFileDialog.getSaveFileName(
+                    self, "Compile and Sign Valheim Save", default_save_path,
+                    "Valheim Character (*.fch)", options=QFileDialog.Option.DontConfirmOverwrite,
+                )
+                if not filename:
+                    return
+                try:
+                    result = self.save_to_destination(Path(filename), payload)
+                except RevisionConflict as exc:
+                    if QMessageBox.warning(
+                        self, "Save Conflict", f"{exc}\n\nSave to another destination?",
+                        QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+                    ) != QMessageBox.Yes:
+                        return
+                    continue
+                if result is None:
+                    return
+                break
+
+            self.file_label.setText(f"Saved: {Path(filename).name} (Char: {char_name})")
 
             QMessageBox.information(
                 self,
                 "Success",
                 f"Character save compiled, signed, and saved successfully!\n\n"
                 f"Location:\n{filename}\n\n"
-                f"{backup_message}"
+                f"{result}"
             )
 
         except Exception as e:
             QMessageBox.critical(self, "Compilation Error", f"Failed to repack and sign the .fch file:\n{str(e)}")
+
+    def save_to_destination(self, destination, payload):
+        snapshot = self.inspect_save_destination(destination)
+        if snapshot is not None:
+            answer = QMessageBox.question(
+                self, "Overwrite Character Save?",
+                f"Replace this character save?\n\n{destination.absolute()}",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return None
+
+        source = Path(self.current_fch) if self.current_fch else None
+        same_destination = source is not None and source.resolve() == destination.resolve()
+        auto_backup = self.config.get("auto_backup", True)
+        backups = []
+        source_changed = False
+        if source and auto_backup and not same_destination:
+            try:
+                source_snapshot = require_destination_revision(source, self.current_revision)
+            except RevisionConflict:
+                source_changed = True
+            else:
+                backups.append(self.create_backup(source, snapshot=source_snapshot))
+        if snapshot is not None and (auto_backup or not same_destination):
+            name = None if same_destination else destination.stem
+            backups.append(self.create_backup(destination, name, snapshot=snapshot))
+
+        revision = write_fch(dict(self.root_save, player_data_hex=payload), destination, destination=snapshot)
+        self.root_save["player_data_hex"] = payload
+        self.current_fch = str(destination)
+        self.current_revision = revision
+        self.loaded_backup = False
+        summary = self.backup_summary(backups, destination, source=source)
+        if source_changed:
+            summary += "\nThe original file changed externally and was left as-is."
+        return summary
