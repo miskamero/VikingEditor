@@ -15,7 +15,7 @@ from subscripts.itemValidation import (
     MIN_STACK, MAX_STACK, MIN_QUALITY, MAX_QUALITY, MIN_VARIANT, MAX_VARIANT,
     MIN_DURABILITY, MAX_DURABILITY, EQUIPMENT_PROPERTY_LIMITS, validate_item,
 )
-from subscripts.playerDataUtil import item_is_cheated
+from subscripts.playerDataUtil import display_item_prefab, item_is_cheated
 
 
 class ItemEditDialog(QDialog):
@@ -59,7 +59,7 @@ class ItemEditDialog(QDialog):
         body.setSpacing(18)
         browse = QGroupBox("Item library")
         browse_layout = QVBoxLayout(browse)
-        self.prefab_input = ItemSearchWidget(item_data.get("prefab", ""), self)
+        self.prefab_input = ItemSearchWidget(display_item_prefab(item_data), self)
         self.initial_prefab = self.prefab_input.get_prefab()
         browse_layout.addWidget(self.prefab_input)
         body.addWidget(browse, 3)

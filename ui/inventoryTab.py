@@ -31,7 +31,7 @@ from subscripts.inventoryLayout import (
     pockets_are_editable, resize_pocket_keys,
 )
 from subscripts.itemValidation import EQUIPMENT_PROPERTY_LIMITS, validate_item, validate_clipboard_item
-from subscripts.playerDataUtil import item_is_cheated
+from subscripts.playerDataUtil import display_item_prefab, item_is_cheated
 
 class InventoryTab(QWidget):
     GRID_WIDTH = GRID_WIDTH
@@ -229,7 +229,7 @@ class InventoryTab(QWidget):
 
     @staticmethod
     def describe_item(index, item):
-        name = item.get("prefab") or f"Unknown item (hash {item.get('prefab_hash', 0)})"
+        name = display_item_prefab(item) or f"Unknown item (hash {item.get('prefab_hash', 0)})"
         return f"Record {index} at ({item.get('grid_x')}, {item.get('grid_y')}) · {name}"
 
     def show_resize_blockers(self, rows, affected):
@@ -376,6 +376,14 @@ class InventoryTab(QWidget):
             tooltip = "Clear saved item cheat flags on unambiguous records. Valheim can reapply them based on item properties."
         self.clear_cheated_button.setToolTip(tooltip)
         self.load_equipment(root_save)
+
+    def refresh_item_catalog(self):
+        if self.player_data is not None:
+            self.init_empty_grid(refresh=True)
+        for slot in self.equipment_slots:
+            slot.update_visuals()
+            if not slot.isEnabled():
+                slot.setToolTip(slot.toolTip() + "\nPreserved read-only: this item cannot be safely edited.")
 
     def load_equipment(self, root_save):
         self.equipment_slots = []
@@ -700,7 +708,7 @@ class InventoryTab(QWidget):
         finally:
             dialog.deleteLater()
 
-    def save_changes(self, player_data=None):
+    def save_changes(self, player_data=None, *, report_errors=True, reset_blocked_resize=False):
         target_data = self.player_data if player_data is None else player_data
         if not target_data or self._rows == self._loaded_rows:
             return True
@@ -708,18 +716,23 @@ class InventoryTab(QWidget):
         uniques = target_data.get("uniques", [])
         if (has_slot_mod_data(target_data) or not pockets_are_editable(uniques)
                 or effective_inventory_rows(uniques) != self._loaded_rows):
-            QMessageBox.warning(self, "Cannot Resize Inventory", "The saved inventory layout has changed.")
+            if report_errors:
+                QMessageBox.warning(self, "Cannot Resize Inventory", "The saved inventory layout has changed.")
             return False
         if affected := self.items_outside_rows(self._rows):
             target = self._rows
-            if player_data is None:
+            if player_data is None or reset_blocked_resize:
                 self._rows = self._loaded_rows
                 self.set_pocket_checks()
                 self.init_empty_grid()
-            self.show_resize_blockers(target, affected)
+            if report_errors:
+                self.show_resize_blockers(target, affected)
             return False
 
         target_data["uniques"] = resize_pocket_keys(uniques, self._loaded_rows, self._rows)
         if player_data is None:
-            self._loaded_rows = self._rows
+            self.mark_saved()
         return True
+
+    def mark_saved(self):
+        self._loaded_rows = self._rows

@@ -259,14 +259,17 @@ class SaveSafetyTests(QtTestCase):
         self.assertFalse(self.window.btn_save_save.isEnabled())
         self.assertIn("restored verbatim", self.information.call_args.args[2])
 
-    def test_failed_reload_after_restore_cannot_save_stale_form(self):
+    def test_failed_restore_preparation_preserves_destination_and_active_form(self):
         self.window.load_file(str(self.target))
+        original = self.target.read_bytes()
+        active = self.window.root_save
         dialog = self.widget(BackupManagerDialog, self.backups, self.window)
-        with patch.object(self.window, "load_file", return_value=False):
+        with patch.object(self.window, "prepare_character", side_effect=ValueError("tab preparation failed")):
             dialog.restore_file(self.source, self.target)
-        self.assertFalse(self.window.btn_save_save.isEnabled())
-        self.assertIsNone(self.window.current_fch)
-        self.assertIsNone(self.window.root_save)
+        self.assertTrue(self.window.btn_save_save.isEnabled())
+        self.assertIs(self.window.root_save, active)
+        self.assertEqual(self.target.read_bytes(), original)
+        self.assertIn("tab preparation failed", self.critical.call_args.args[2])
 
     def test_external_valid_replacement_survives_with_or_without_backup(self):
         for enabled in (False, True):

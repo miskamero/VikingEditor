@@ -259,15 +259,14 @@ class BackupManagerDialog(QDialog):
                 raise FileNotFoundError(backup_path)
             verified_payload(backup.contents)
             structural_error = None
+            profile = None
             try:
-                profile = parse_fch(backup.contents, require_supported_version=True)
-                if profile["player_data_hex"] is None:
-                    raise ValueError("This profile has no editable player data.")
+                profile = parse_fch(backup.contents)
             except (ValueError, EOFError) as exc:
                 structural_error = str(exc)
             while True:
                 try:
-                    result = self.restore_to_destination(backup_path, backup, destination, structural_error)
+                    result = self.restore_to_destination(backup_path, backup, destination, profile, structural_error)
                 except RevisionConflict as exc:
                     if QMessageBox.warning(
                         self, "Restore Conflict", f"{exc}\n\nRestore to another destination?",
@@ -284,23 +283,19 @@ class BackupManagerDialog(QDialog):
                     continue
                 if result is None:
                     return
-                revision, backups = result
+                backups = result
                 break
-        except (OSError, ValueError, EOFError) as exc:
+        except Exception as exc:
             QMessageBox.critical(self, "Restore Failed", str(exc))
             return
 
-        loaded = self.main_window.current_fch
-        if loaded and Path(loaded).resolve() == destination.resolve():
-            if structural_error or not self.main_window.load_file(str(destination), expected_revision=revision):
-                self.main_window.clear_document()
         summary = self.main_window.backup_summary(backups, destination, source=backup_path)
         status = ("Archival bytes restored verbatim. Only the checksum was verified."
                   if structural_error else "Checksum and supported save structure verified. Gameplay is unverified.")
         QMessageBox.information(self, "Backup Restored", f"Restored:\n{destination.absolute()}\n\n{status}\n\n{summary}")
         self.load_backups()
 
-    def restore_to_destination(self, backup_path, backup, destination, structural_error):
+    def restore_to_destination(self, backup_path, backup, destination, profile, structural_error):
         snapshot = self.main_window.inspect_save_destination(destination)
         if snapshot is not None and backup_path.samefile(destination):
             raise ValueError("The selected backup is already the destination file.")
@@ -322,14 +317,28 @@ class BackupManagerDialog(QDialog):
         if QMessageBox.question(self, title, message, QMessageBox.Yes | QMessageBox.No,
                                 QMessageBox.No) != QMessageBox.Yes:
             return None
-        backups = []
-        if snapshot is not None:
-            backups.append(self.main_window.create_backup(
-                destination, destination.stem, allow_damaged=True, snapshot=snapshot,
-            ))
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        revision = atomic_write(destination, backup.contents, snapshot)
-        return revision, backups
+        window = self.main_window
+        if window.is_current_document(destination) and not window.confirm_document_transition(
+            "restoring over the open character", protected_path=destination,
+        ):
+            return None
+        replacing_document = window.is_current_document(destination)
+        prepared = window.prepare_character(profile) if replacing_document and profile is not None else None
+        try:
+            backups = []
+            if snapshot is not None:
+                backups.append(window.create_backup(destination, destination.stem, allow_damaged=True, snapshot=snapshot))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            revision = atomic_write(destination, backup.contents, snapshot)
+            if prepared is not None:
+                window.install_character(prepared, str(destination), revision=revision)
+                prepared = None
+            elif replacing_document:
+                window.clear_document()
+            return backups
+        finally:
+            if prepared is not None:
+                prepared[0].deleteLater()
 
     def delete_backup(self):
         path = self.get_selected_backup()

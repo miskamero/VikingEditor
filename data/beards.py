@@ -23,11 +23,12 @@ VALHEIM_BEARDS = {
     "Beard24": "Waxed",
     "Beard20": "Spiky",
     "Beard18": "Jarl Braids",
-    "Beard17": "Neat"
+    "Beard17": "Neat",
+    "Beard19": "Bushy",
 }
 
 sorted_beards = dict(
     sorted(VALHEIM_BEARDS.items(), key=lambda item: item[1].lower())
 )
 
-VALHEIM_BEARDS = {"nobeard": "No beard", **sorted_beards}
+VALHEIM_BEARDS = {"BeardNone": "No Beard", **sorted_beards}

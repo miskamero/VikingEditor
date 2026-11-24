@@ -4,6 +4,7 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from subscripts.itemDatabase import get_item_icon_path
+from subscripts.playerDataUtil import display_item_prefab
 from PySide6.QtWidgets import (
     QToolButton,
     QLabel,
@@ -330,7 +331,7 @@ class InventorySlot(QToolButton):
                 self.setAccessibleDescription("")
             return
 
-        prefab = item.get("prefab") or ""
+        prefab = display_item_prefab(item)
         self._display_name = format_item_name(prefab) if prefab else "Unknown item"
         details = self._display_name if prefab else f"Unknown item (ID: {item.get('prefab_hash', '?')})"
         cached_icon = get_item_icon_path(prefab, item.get("variant", 0))

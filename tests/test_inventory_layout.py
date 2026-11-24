@@ -326,12 +326,13 @@ class InventoryLayoutWireTests(QtTestCase):
             self.assertEqual(self.target.read_bytes(),
                              wire_character(version, records, ("other", "InvRows 5", "invslot1", "invslot9")))
             self.assertTrue(self.window.load_file(self.target))
+            tab = self.window.inventory_tab
             self.assertEqual(tab.get_inventory_rows(), 5)
             tab.wider_pockets_checkbox.setChecked(False)
             self.save()
             self.assertEqual(self.target.read_bytes(), wire_character(version, records, ("other", "invslot9")))
             self.assertTrue(self.window.load_file(self.target))
-            self.assertEqual(tab.get_inventory_rows(), 4)
+            self.assertEqual(self.window.inventory_tab.get_inventory_rows(), 4)
 
     def test_save_rechecks_shrink_before_opening_picker(self):
         original = wire_character(110, (wire_item(0, 0),), ("invrows 6", "invslot1", "invslot2"))

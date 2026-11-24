@@ -131,10 +131,10 @@ class LosslessGuiTests(QtTestCase):
 
     def test_new_document_and_backup_reset_pending_values_and_unlisted_choices(self):
         self.load_wire()
-        vitals = self.window.stats_tab
-        appearance = self.window.appearance_tab
-        vitals.health_spin.setValue(49)
-        original = self.load_wire(power="AnotherMod", model=-171, backup=True)
+        self.window.stats_tab.health_spin.setValue(49)
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.Discard):
+            original = self.load_wire(power="AnotherMod", model=-171, backup=True)
+        vitals, appearance = self.window.stats_tab, self.window.appearance_tab
         self.assertEqual(vitals.gp_combo.currentData(), "AnotherMod")
         self.assertEqual(vitals.gp_combo.findData("ModPower"), -1)
         self.assertEqual(appearance.model_combo.currentData(), -171)
@@ -143,6 +143,7 @@ class LosslessGuiTests(QtTestCase):
         self.assertEqual(self.output.read_bytes(), original)
         with patch.object(QInputDialog, "getText", return_value=("New Character", True)):
             self.window.new_character()
+        vitals, appearance = self.window.stats_tab, self.window.appearance_tab
         self.assertEqual(vitals.gp_combo.currentData(), "")
         self.assertEqual(vitals.gp_combo.findData("AnotherMod"), -1)
         self.assertEqual(appearance.model_combo.currentData(), 0)
@@ -248,7 +249,9 @@ class LosslessGuiTests(QtTestCase):
                 self.assertEqual(json.loads(text)["inventory_version"], inventory)
                 tab.paste_slot_item(tab.slots[(4, 1)])
                 self.assertEqual(tab.slots[(4, 1)].item_data, dict(record, grid_x=4))
-                self.load_wire(inventory=219 - inventory)
+                with patch.object(QMessageBox, "question", return_value=QMessageBox.Discard):
+                    self.load_wire(inventory=219 - inventory)
+                tab = self.window.inventory_tab
                 clipboard.setText(text)
                 tab.paste_slot_item(tab.slots[(4, 1)])
                 self.assertIsNone(tab.slots[(4, 1)].item_data)
@@ -259,6 +262,7 @@ class LosslessGuiTests(QtTestCase):
         inventory = self.window.inventory_tab
         legacy = json.dumps({"valheim_editor": "inventory_item", "item": inventory.slots[(2, 1)].item_data})
         self.load_wire(inventory=110)
+        inventory = self.window.inventory_tab
         QApplication.clipboard().setText(legacy)
         inventory.paste_slot_item(inventory.slots[(4, 1)])
         self.assertIsNone(inventory.slots[(4, 1)].item_data)

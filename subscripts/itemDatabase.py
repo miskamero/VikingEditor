@@ -3,11 +3,13 @@ import json
 import os
 import hashlib
 import io
+import re
 import tempfile
 from functools import lru_cache
 
 import UnityPy
 from UnityPy.enums import ClassIDType
+from subscripts.fchUtil import atomic_write, read_file_snapshot
 
 # LOCALAPPDATA on Windows, XDG config directory elsewhere.
 # Same formula as VALHEIM_CONFIG_PATH; duplicated so that subscripts
@@ -116,22 +118,29 @@ def get_item_shared_name(component):
         return None
 
 
+def cached_prefabs(contents):
+    try:
+        entries = json.loads(contents)["items"]
+        if not isinstance(entries, dict):
+            raise ValueError("expected an items object")
+    except (ValueError, KeyError, TypeError) as exc:
+        print(f"Warning: could not load item database: {exc}")
+        return {}
+    prefabs = {}
+    for key, item in entries.items():
+        if isinstance(item, dict) and isinstance(item.get("prefab"), str) and item["prefab"]:
+            try:
+                prefabs[int(key)] = item["prefab"]
+            except ValueError:
+                continue
+    return prefabs
+
+
 def load_item_database():
     """Load the cached Valheim item database."""
-
     try:
-        with ITEM_DATABASE_PATH.open(
-            "r",
-            encoding="utf-8",
-        ) as file:
-            data = json.load(file)
-
-        return {
-            int(prefab_hash): item["prefab"]
-            for prefab_hash, item in data.get("items", {}).items()
-        }
-
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return cached_prefabs(ITEM_DATABASE_PATH.read_bytes())
+    except OSError as exc:
         print(f"Warning: could not load item database: {exc}")
         return {}
 
@@ -168,7 +177,7 @@ def get_item_icon_path(prefab, variant=0):
     return None
 
 
-def extract_item_icons(component, sprite_cache, errors=None):
+def extract_item_icons(component, sprite_cache, errors=None, *, icon_directory=None):
     """Export shared icon variants, retaining empty entries for missing sprites."""
     try:
         references = component.read().m_itemData.m_shared.m_icons
@@ -200,7 +209,7 @@ def extract_item_icons(component, sprite_cache, errors=None):
             continue
         # Disk errors fail the update, while decoding failures above use fallback icons.
         filename = hashlib.sha256(payload).hexdigest() + ".png"
-        folder = ITEM_DATABASE_PATH.parent / "item_icons"
+        folder = icon_directory if icon_directory is not None else ITEM_DATABASE_PATH.parent / "item_icons"
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / filename
         with tempfile.NamedTemporaryFile(dir=folder, delete=False) as output:
@@ -215,6 +224,12 @@ def extract_item_icons(component, sprite_cache, errors=None):
     return icons
 
 
+def has_bundle_header(path):
+    with path.open("rb") as stream:
+        header = stream.read(32)
+    return len(header) == 32 and header.startswith(b"UnityFS\0") and int.from_bytes(header[8:12], "big") >= 6
+
+
 def find_valheim_bundles(valheim_dir):
     bundles_dir = get_bundles_dir(valheim_dir)
 
@@ -223,22 +238,49 @@ def find_valheim_bundles(valheim_dir):
             f"Valheim bundles directory not found: {bundles_dir}"
         )
 
-    return [
-        path
-        for path in bundles_dir.iterdir()
-        if path.is_file()
-    ]
+    files = {path.name: path for path in bundles_dir.iterdir() if path.is_file()}
+    manifest = bundles_dir.parent / "manifest"
+    if not manifest.is_file():
+        manifest = bundles_dir.parent / "manifest_extended"
+    if manifest.is_file():
+        source = manifest.read_text(encoding="utf-8-sig")
+        bundle_ids = set(re.findall(r"^(?:- bundle: |  bundle: |  - )([0-9a-fA-F]+)[ \t]*$", source, re.M))
+        if not source.startswith("SoftRef manifest - Text\n") or not bundle_ids:
+            raise ValueError(f"Cannot read the bundle list in {manifest.name}. Verify the Valheim installation.")
+        missing = sorted(bundle_ids - files.keys())
+        if missing:
+            raise ValueError(f"Missing {len(missing)} Valheim bundle(s), including {missing[0]}. Verify the installation.")
+        candidates = [files[name] for name in sorted(bundle_ids)]
+        for path in candidates:
+            if not has_bundle_header(path):
+                raise ValueError(f"Valheim bundle {path.name} has an invalid header. Verify the installation.")
+    else:
+        candidates = [path for path in sorted(files.values()) if has_bundle_header(path)]
+    if not candidates:
+        raise ValueError(f"No Unity asset bundles were found in {bundles_dir}. Select a complete Valheim installation.")
+    return candidates
+
+
+def expected_catalog_prefabs(valheim_dir, snapshot):
+    extended = get_bundles_dir(valheim_dir).parent / "manifest_extended"
+    if not extended.is_file():
+        return set()
+    source = extended.read_text(encoding="utf-8-sig")
+    if not source.startswith("SoftRef manifest - Text\n"):
+        raise ValueError("Cannot read manifest_extended. Verify the Valheim installation.")
+    prefab_names = {Path(path).stem for path in re.findall(r"^  path in bundle: ([^\n]+\.prefab)$", source, re.M)}
+    # Require proven item assets when the source still advertises them. A
+    # different installation can legitimately omit items from the old cache.
+    previous = set(cached_prefabs(snapshot.contents).values()) if snapshot is not None else set()
+    return prefab_names & (previous | {"Club", "Torch", "Wood"})
 
 
 def update_item_database(valheim_dir, progress_callback=None, cancel_callback=None):
+    if cancel_callback and cancel_callback():
+        return None
     bundle_files = find_valheim_bundles(valheim_dir)
-
-    if bundle_files is None:
-        raise FileNotFoundError(
-            f"this error should not be possible? please make a bug report with this message: {valheim_dir}"
-        )
-
-    print("Loading Valheim bundles...")
+    previous = read_file_snapshot(ITEM_DATABASE_PATH)
+    expected = expected_catalog_prefabs(valheim_dir, previous)
 
     env = UnityPy.Environment()
 
@@ -250,11 +292,12 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         if cancel_callback and cancel_callback():
             print("\nItem database update cancelled.")
             return None
-        env.load_file(str(bundle_path))
-
-    print()
-    print("All bundles loaded.")
-    print()
+        try:
+            bundle = env.load_file(str(bundle_path))
+            if not getattr(bundle, "files", None):
+                raise ValueError("no readable assets")
+        except Exception as exc:
+            raise ValueError(f"Could not load Valheim bundle {bundle_path.name}: {exc}. Verify the installation.") from exc
 
     if progress_callback:
         progress_callback(
@@ -268,6 +311,8 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
     # prefab name -> localized shared name
     items = {}
     item_components = {}
+    unreadable_items = set()
+    readable_items = set()
 
     game_objects_checked = 0
     itemdrops_checked = 0
@@ -307,7 +352,7 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
                     continue
 
                 cache_key = (
-                    component.assets_file.name,
+                    id(component.assets_file),
                     component.path_id,
                 )
 
@@ -322,10 +367,14 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
                 itemdrops_checked += 1
 
                 shared_name = get_item_shared_name(component)
+                if not isinstance(shared_name, str):
+                    unreadable_items.add(prefab_name)
+                else:
+                    readable_items.add(prefab_name)
 
                 # Only actual localized item names.
                 if (
-                    shared_name is not None
+                    isinstance(shared_name, str)
                     and shared_name.startswith("$item_")
                 ):
                     items[prefab_name] = shared_name
@@ -336,6 +385,21 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
             except Exception:
                 continue
 
+    if not items:
+        raise ValueError("No Valheim items could be extracted. Verify the installation or try updating again.")
+    missing = sorted((expected - items.keys()) | (unreadable_items - readable_items))
+    if missing:
+        raise ValueError(f"Incomplete item catalog: could not extract {len(missing)} item(s), including {missing[0]}.")
+
+    ITEM_DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=ITEM_DATABASE_PATH.parent, prefix="item-catalog-") as directory:
+        return stage_item_catalog(items, item_components, Path(directory), previous,
+                                  get_bundles_dir(valheim_dir), game_objects_checked, itemdrops_checked,
+                                  progress_callback, cancel_callback)
+
+
+def stage_item_catalog(items, item_components, icon_directory, previous, source, game_objects_checked,
+                       itemdrops_checked, progress_callback, cancel_callback):
     # Build hash -> item data.
     hash_to_item = {}
 
@@ -368,19 +432,21 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         hash_to_item[prefab_hash] = {
             "prefab": prefab_name,
             "shared_name": shared_name,
-            "icons": extract_item_icons(item_components[prefab_name], sprite_cache, icon_errors),
+            "icons": extract_item_icons(item_components[prefab_name], sprite_cache, icon_errors,
+                                        icon_directory=icon_directory),
         }
 
-    if hash_to_item and not sprite_cache:
-        detail = icon_errors[0] if icon_errors else "No readable sprite references were found."
-        raise RuntimeError(
-            "No item icons could be extracted. The existing item database has been preserved.\n\n"
-            + detail
-        )
+    if hash_collisions:
+        collision = hash_collisions[0]
+        raise ValueError(f"Item hash {collision['hash']} is shared by {collision['first']} and {collision['second']}.")
+    if icon_errors:
+        raise RuntimeError(f"Incomplete item icons: {icon_errors[0]}")
+    if not sprite_cache:
+        raise RuntimeError("No item icons could be extracted. Verify the installation and its asset files.")
 
     output = {
         "valheim_version": "1.0",
-        "source": str(get_bundles_dir(valheim_dir)),
+        "source": str(source),
         "item_count": len(hash_to_item),
         "icon_count": len(sprite_cache),
         "icon_error_count": len(icon_errors),
@@ -393,25 +459,26 @@ def update_item_database(valheim_dir, progress_callback=None, cancel_callback=No
         },
     }
 
-    if hash_collisions:
-        output["hash_collisions"] = hash_collisions
-
-    ITEM_DATABASE_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
     if cancel_callback and cancel_callback():
         return None
-    # Publish only a complete database; cancelled scans leave the old one usable.
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                     dir=ITEM_DATABASE_PATH.parent, delete=False) as file:
-        temporary = Path(file.name)
-        json.dump(output, file, indent=2, ensure_ascii=False)
-    try:
-        temporary.replace(ITEM_DATABASE_PATH)
-    finally:
-        temporary.unlink(missing_ok=True)
+    encoded = json.dumps(output, indent=2, ensure_ascii=False).encode("utf-8")
+    # Icons are immutable blobs. The existing manifest keeps referring to the
+    # same files until the complete replacement manifest is published.
+    folder = ITEM_DATABASE_PATH.parent / "item_icons"
+    folder.mkdir(exist_ok=True)
+    for staged in icon_directory.iterdir():
+        if cancel_callback and cancel_callback():
+            return None
+        path = folder / staged.name
+        payload = staged.read_bytes()
+        snapshot = read_file_snapshot(path)
+        if snapshot is None:
+            atomic_write(path, payload, None)
+        elif snapshot.contents != payload:
+            raise ValueError(f"Cached icon {path.name} is damaged. Remove that icon and retry the update.")
+    if cancel_callback and cancel_callback():
+        return None
+    atomic_write(ITEM_DATABASE_PATH, encoded, previous)
     load_item_icons.cache_clear()
 
     print()

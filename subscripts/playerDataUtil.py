@@ -8,9 +8,14 @@ from subscripts.itemDatabase import load_item_database
 
 ITEM_HASH_TO_PREFAB = load_item_database()
 
-def reload_item_database():
+def reload_item_database(items=None):
+    updated = load_item_database() if items is None else items
     ITEM_HASH_TO_PREFAB.clear()
-    ITEM_HASH_TO_PREFAB.update(load_item_database())
+    ITEM_HASH_TO_PREFAB.update(updated)
+
+
+def display_item_prefab(item):
+    return item.get("prefab") or ITEM_HASH_TO_PREFAB.get(item.get("prefab_hash"), "")
 
 def int32(value):
     value &= 0xFFFFFFFF

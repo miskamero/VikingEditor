@@ -5,6 +5,7 @@ import psutil
 import json
 from pathlib import Path
 from typing import Optional
+from subscripts.itemDatabase import get_bundles_dir, has_bundle_header
 
 # LOCALAPPDATA on Windows, XDG config directory elsewhere.
 VALHEIM_CONFIG_PATH = (
@@ -93,18 +94,10 @@ def valheim_warning_message() -> str:
     return "Valheim is not currently running."
 
 def is_valid_valheim_installation(path: Path) -> bool:
-    if not path.is_dir():
+    try:
+        return any(bundle.is_file() and has_bundle_header(bundle) for bundle in get_bundles_dir(path).iterdir())
+    except OSError:
         return False
-
-    bundles_dir = (
-        path
-        / "valheim_Data"
-        / "StreamingAssets"
-        / "SoftRef"
-        / "Bundles"
-    )
-
-    return bundles_dir.is_dir()
 
 def get_steam_installations() -> list[Path]:
     installations = []

@@ -53,9 +53,10 @@ class QtTestCase(unittest.TestCase):
         return widget
 
     def cleanup_widgets(self):
-        for widget in reversed(self.widgets):
-            widget.close()
-            widget.deleteLater()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.Discard):
+            for widget in reversed(self.widgets):
+                widget.close()
+                widget.deleteLater()
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
         self.app.processEvents()
 
@@ -101,9 +102,9 @@ class MainWindowTests(QtTestCase):
             self.assertTrue(window.btn_save_save.isEnabled())
             empty = Path(directory) / "empty.fch"
             write_fch(dict(self.root, player_data_hex=None), empty)
-            with patch.object(QMessageBox, "critical"):
-                self.assertFalse(window.load_file(str(empty)))
-            self.assertEqual(window.current_fch, str(source))
+            self.assertTrue(window.load_file(str(empty)))
+            self.assertEqual(window.current_fch, str(empty))
+            self.assertFalse(window.btn_save_save.isEnabled())
             self.assertIsNotNone(window.current_revision)
             self.assertTrue(window.load_file(source, backup=True))
             self.assertIsNone(window.current_fch)
@@ -442,6 +443,33 @@ class StatsTests(QtTestCase):
 
 
 class AppearanceTests(QtTestCase):
+    def test_installed_styles_and_no_style_ids_preserve_unrelated_appearance(self):
+        tab = self.widget(AppearanceTab)
+        self.data.update(hair="nohair", beard="nobeard", skin_color=[0.125, 0.4, 0.33])
+        original = deepcopy(self.data)
+        tab.load_data(self.data)
+        self.assertEqual(tab.hair_combo.currentData(), "nohair")
+        self.assertEqual(tab.beard_combo.currentData(), "nobeard")
+        tab.save_changes()
+        self.assertEqual(self.data, original)
+        expected = deepcopy(original)
+        for field, prefab, label in (("hair", "Hair38", "Masculine"), ("beard", "Beard19", "Bushy"),
+                                     ("hair", "HairNone", "No Hair"), ("beard", "BeardNone", "No Beard")):
+            combo = getattr(tab, f"{field}_combo")
+            index = combo.findData(prefab)
+            self.assertGreaterEqual(index, 0)
+            self.assertEqual(combo.itemText(index), label)
+            combo.setCurrentIndex(index)
+            tab.save_changes()
+            expected[field] = prefab
+            self.assertEqual(self.data, expected)
+        tab.load_data(dict(original, hair="ModHair", beard="HairBeardMod", model_index=101))
+        self.assertEqual(tab.hair_combo.findData("nohair"), -1)
+        self.assertEqual(tab.beard_combo.findData("nobeard"), -1)
+        self.assertEqual(tab.model_combo.currentData(), 101)
+        self.assertEqual(tab.hair_combo.currentData(), "ModHair")
+        self.assertEqual(tab.beard_combo.currentData(), "HairBeardMod")
+
     def test_modded_styles_survive_unrelated_edits(self):
         tab = self.widget(AppearanceTab)
         for changed, other in (("hair", "beard"), ("beard", "hair")):

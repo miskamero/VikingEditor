@@ -36,6 +36,7 @@ VALHEIM_HAIRS = {
     "Hair35": "Champion",
     "Hair36": "Chronicler",
     "Hair37": "Sunbringer",
+    "Hair38": "Masculine",
 }
 
 # sort alphabetically
@@ -43,5 +44,4 @@ sorted_hairs = dict(
     sorted(VALHEIM_HAIRS.items(), key=lambda item: item[1].lower())
 )
 
-# add nohair to 0 index
-VALHEIM_HAIRS = {"nohair": "No Hair", **sorted_hairs}
+VALHEIM_HAIRS = {"HairNone": "No Hair", **sorted_hairs}

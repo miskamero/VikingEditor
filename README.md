@@ -120,7 +120,7 @@ For automated test commands and coverage, see [Automated tests](CONTRIBUTING.md#
 
 ### New Character Creation
 
-Create a completely fresh Valheim character directly from VikingEditor.
+Create a character from VikingEditor's blank template.
 
 New characters are generated with:
 
@@ -128,8 +128,9 @@ New characters are generated with:
 * A new character start seed
 * Current save format
 * Default health and stamina
-* Default appearance
+* Editable appearance with hair and beard unspecified
 * Empty inventory
+* First-spawn intro flag off
 * Empty progression data
 * Empty world data
 * Empty statistics
@@ -270,6 +271,9 @@ If it cannot find it, the application will allow you to select the Valheim insta
 9. Launch Valheim and load the character.
 
 VikingEditor does **not** modify the original save file when you save your changes to a different location.
+Opening another character, restoring over the active character, or closing the editor prompts you to
+save or discard pending changes. Supported profiles without a player payload open for read-only
+metadata inspection and JSON export.
 
 ### Character JSON
 
@@ -294,9 +298,11 @@ after an explicit warning when supported structural validation fails.
 
 ## Creating a New Character
 
-VikingEditor can create a brand-new Valheim character without first having an existing `.fch` file.
+VikingEditor's blank template uses an empty inventory, a generated start seed, and the first-spawn
+intro flag off. Valheim's own creation screen starts with a Club and Torch, an empty start seed,
+and the first-spawn flag set.
 
-1. Select **File → New Character...**
+1. Select **File → New Blank Character...**
 2. Enter the desired character name.
 3. The editor generates a fresh character.
 4. Edit the character using the normal editor tabs.
@@ -304,8 +310,6 @@ VikingEditor can create a brand-new Valheim character without first having an ex
 6. Choose where to save the new `.fch` file.
 7. Place the file in your Valheim character directory.
 8. Launch Valheim and use the new character.
-
-The generated character format has been tested by loading the resulting `.fch` file in Valheim.
 
 ---
 

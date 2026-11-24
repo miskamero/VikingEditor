@@ -84,13 +84,11 @@ def validate_nested_player(raw):
         raise type(exc)(f"Nested player data: {exc}") from exc
 
 
-def parse_fch(contents: bytes, *, require_supported_version=False, validate_player=True) -> dict:
+def parse_fch(contents: bytes, *, validate_player=True) -> dict:
     pkg = BinaryReader(verified_payload(contents, for_editing=True))
     version = pkg.read_int32()
     if version not in SUPPORTED_PROFILE_VERSIONS:
-        if require_supported_version:
-            raise ValueError(f"Unsupported character profile version {version}.")
-        print(f"Warning: This parser targets Valheim Versions 46 and 47. Attempting to parse Version {version} anyway...")
+        raise ValueError(f"Unsupported character profile version {version}. Editing supports versions 46 and 47.")
 
     stat_count = pkg.read_count("stat_count", 0)
     profile_count = pkg.read_count("profile_count", 0)

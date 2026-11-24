@@ -253,7 +253,7 @@ class CharacterTab(QWidget):
             )
         )
 
-    def save_changes(self, player_data=None, root_save=None):
+    def save_changes(self, player_data=None, root_save=None, *, report_errors=True):
         root = self.root_save if root_save is None else root_save
         player = self.player_data if player_data is None else player_data
         if not root:
@@ -265,11 +265,8 @@ class CharacterTab(QWidget):
         new_name = name.strip()
 
         if not new_name:
-            QMessageBox.warning(
-                self,
-                "Invalid Character Name",
-                "Character name cannot be empty."
-            )
+            if report_errors:
+                QMessageBox.warning(self, "Invalid Character Name", "Character name cannot be empty.")
             return False
 
         root["character_name"] = new_name

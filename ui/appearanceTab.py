@@ -115,7 +115,7 @@ class AppearanceTab(QWidget):
                     combo.removeItem(count)
                 value = data.get(field, combo.itemData(0))
                 if combo.findData(value) == -1:
-                    label = f"Unlisted model ({value})" if field == "model_index" else value
+                    label = f"Unlisted model ({value})" if field == "model_index" else value or "Unspecified (empty ID)"
                     combo.addItem(label, value)
                 combo.setCurrentIndex(combo.findData(value))
         self.on_model_changed()
